@@ -4,7 +4,8 @@ A KOReader plugin that turns an old jailbroken Kindle (tested on Paperwhite 10) 
 e-ink remote for Sonos speakers, with optional Spotify browsing/playback (via Sonos or
 Spotify Connect).
 
-**Status: alpha.** Expect rough edges. The UI is currently mostly in Polish; an English translation is planned.
+**Status: alpha.** Expect rough edges. The UI is in English, with a Polish translation
+(Settings → Language: English / Polski / Auto, which follows KOReader's language).
 
 ## ⚠️ Warnings
 
@@ -19,6 +20,12 @@ Spotify Connect).
 - Local Sonos control over UPnP (no cloud): play/pause/skip, volume, groups/rooms,
   shuffle/repeat, sleep timer; auto-discovery and per-household profiles.
 - Spotify: browse library/playlists, search, radio, play on Sonos or any Spotify Connect device.
+- Small album-art thumbnail next to the track title on the remote.
+- "Now playing" sleep screen: when the Kindle sleeps inside KOReader while music plays (or while
+  the remote is open), the sleep screen shows the cover, title, artist, album and room instead of
+  the usual KOReader screensaver. E-ink keeps the picture without power but it does not update
+  while the Kindle sleeps; it shows the time it was taken. Turn it off in Settings.
+- Translations: strings live in `plugin/kindlemusic.koplugin/l10n.lua` (English keys → translation).
 
 ## Layout
 

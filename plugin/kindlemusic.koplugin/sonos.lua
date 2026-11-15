@@ -9,6 +9,7 @@ standalone with KOReader's luajit.
 
 local http = require("socket.http")
 local ltn12 = require("ltn12")
+local T = require("l10n").T
 
 local Sonos = {}
 
@@ -152,6 +153,12 @@ function Sonos.getTrack(ip)
         info.title = Sonos.unescape(tag(didl, "dc:title"))
         info.artist = Sonos.unescape(tag(didl, "dc:creator"))
         info.album = Sonos.unescape(tag(didl, "upnp:album"))
+        -- cover: usually a relative /getaa?… link served by the speaker itself
+        local art = Sonos.unescape(tag(didl, "upnp:albumArtURI"))
+        if art and art ~= "" then
+            if art:match("^/") then art = "http://" .. ip .. ":1400" .. art end
+            if art:match("^https?://") then info.art = art end
+        end
         -- Radio streams: "Artist - Title" lives in r:streamContent
         local stream = Sonos.unescape(tag(didl, "r:streamContent"))
         if stream and stream ~= "" then
@@ -353,7 +360,7 @@ function Sonos.playItem(group, entry, before_play)
     if not uuid or not uuid:match("^RINCON_") then
         local err
         uuid, err = Sonos.getUUID(ip)
-        if not uuid then return nil, err or "brak UUID" end
+        if not uuid then return nil, err or "no UUID" end
     end
     local ok, err
     if is_queueable(entry) then
@@ -416,13 +423,13 @@ end
 --- Replace the queue with a list of track entries and start playing.
 -- Starts after the first track is queued, then appends the rest.
 function Sonos.playTracks(group, entries, async_rest)
-    if #entries == 0 then return nil, "brak utworów" end
+    if #entries == 0 then return nil, "no tracks" end
     local ip = group.ip
     local uuid = group.coordinator
     if not uuid or not uuid:match("^RINCON_") then
         local err
         uuid, err = Sonos.getUUID(ip)
-        if not uuid then return nil, err or "brak UUID" end
+        if not uuid then return nil, err or "no UUID" end
     end
     local function enqueue(e) return Sonos.enqueue(ip, e) end
     local ok, err = Sonos.soap(ip, "AVTransport", "RemoveAllTracksFromQueue", { {"InstanceID", 0} })
@@ -553,22 +560,22 @@ function Sonos.spotifySerials(ip)
     return list
 end
 
---- UPnP error codes -> human readable (Polish).
+--- UPnP error codes -> human readable (English; translated by l10n).
 Sonos.ERRORS = {
-    ["701"] = "Brak czego odtwarzać (kolejka pusta)",
-    ["711"] = "Brak następnego / poprzedniego utworu",
-    ["712"] = "Nie można przejść do tego utworu",
-    ["800"] = "Głośnik nie jest koordynatorem grupy",
+    ["701"] = "Nothing to play (queue is empty)",
+    ["711"] = "No next / previous track",
+    ["712"] = "Cannot skip to this track",
+    ["800"] = "Speaker is not the group coordinator",
 }
 
 function Sonos.describeError(err)
     err = tostring(err)
     local code = err:match("^upnp:(%d+)")
     if code then
-        return Sonos.ERRORS[code] or ("Błąd Sonos " .. code)
+        return Sonos.ERRORS[code] and T(Sonos.ERRORS[code]) or T("Sonos error %1", code)
     end
-    if err == "timeout" then return "Głośnik nie odpowiada (timeout)" end
-    return "Błąd sieci: " .. err
+    if err == "timeout" then return T("Speaker is not responding (timeout)") end
+    return T("Network error: %1", err)
 end
 
 return Sonos

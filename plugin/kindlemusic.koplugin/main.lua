@@ -1,7 +1,7 @@
 --[[--
 Sonos remote for KOReader.
 
-Tools menu → "Sonos", or bind the "Sonos: pilot" action to a gesture.
+Tools menu → "Kindle Music", or bind the "Kindle Music: remote" action to a gesture.
 
 @module koplugin.kindlemusic
 --]]
@@ -17,6 +17,9 @@ local Event = require("ui/event")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
+local HorizontalGroup = require("ui/widget/horizontalgroup")
+local HorizontalSpan = require("ui/widget/horizontalspan")
+local ImageWidget = require("ui/widget/imagewidget")
 local InfoMessage = require("ui/widget/infomessage")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local InputDialog = require("ui/widget/inputdialog")
@@ -25,6 +28,7 @@ local Menu = require("ui/widget/menu")
 local NetworkMgr = require("ui/network/manager")
 local Size = require("ui/size")
 local TextBoxWidget = require("ui/widget/textboxwidget")
+local TextWidget = require("ui/widget/textwidget")
 local TitleBar = require("ui/widget/titlebar")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
@@ -33,14 +37,17 @@ local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local logger = require("logger")
 local socketutil = require("socketutil")
 local _ = require("gettext")
+local L10n = require("l10n")
+local T = L10n.T
 local Screen = Device.screen
 
 local Sonos = require("sonos")
 local Spotify = require("spotify")
 local SpotifyUI = require("spotifyui")
+local SleepScreen = require("sleepscreen")
 
 -- No built-in speakers: they are found by auto-discovery (subnet scan) or entered in
--- Tools → Sonos → set speaker IP, and stored in koreader/settings/kindlemusic.lua.
+-- Tools → Kindle Music → set speaker IP, and stored in koreader/settings/kindlemusic.lua.
 local DEFAULT_SPEAKERS = {}
 local VOLUME_STEP = 5
 local AUTO_REFRESH_SECONDS = 15
@@ -48,10 +55,10 @@ local AUTO_REFRESH_SECONDS = 15
 local AUTOSTART_FLAG = "/tmp/sonos_autostart"
 
 local STATE_LABELS = {
-    PLAYING = "▶ Gra",
-    PAUSED_PLAYBACK = "Pauza",
-    STOPPED = "Zatrzymane",
-    TRANSITIONING = "Ładowanie…",
+    PLAYING = "▶ Playing",
+    PAUSED_PLAYBACK = "Paused",
+    STOPPED = "Stopped",
+    TRANSITIONING = "Loading…",
 }
 
 --- Run fn with short network timeouts; never throws.
@@ -111,7 +118,7 @@ function SonosRemote:build()
         fullscreen = true,
         with_bottom_line = true,
         title = "Sonos",
-        subtitle = self.connect and ("Spotify Connect: " .. self.connect.name) or (group and group.name or "Brak głośników"),
+        subtitle = self.connect and ("Spotify Connect: " .. self.connect.name) or (group and group.name or T("No speakers")),
         close_callback = function() UIManager:close(self) end,
         show_parent = self,
     }
@@ -133,13 +140,13 @@ function SonosRemote:build()
     if #row > 0 then table.insert(room_rows, row) end
     local extra = {}
     if #self.groups > 0 and not self.connect then
-        table.insert(extra, { text = "Grupuj pokoje…", callback = function() self:showGrouping() end })
+        table.insert(extra, { text = T("Group rooms…"), callback = function() self:showGrouping() end })
     end
-    table.insert(extra, { text = (self.connect and "● " or "") .. "Inne urządzenia…",
+    table.insert(extra, { text = (self.connect and "● " or "") .. T("Other devices…"),
         callback = function() self:showConnectDevices() end })
     table.insert(room_rows, extra)
     if #room_rows == 0 then
-        room_rows = { { { text = "Szukaj głośników", callback = function() self:rediscover() end } } }
+        room_rows = { { { text = T("Find speakers"), callback = function() self:rediscover() end } } }
     end
 
     local track = self.track or {}
@@ -147,15 +154,20 @@ function SonosRemote:build()
     local sub_parts = {}
     if track.artist and track.artist ~= "" then table.insert(sub_parts, track.artist) end
     if track.album and track.album ~= "" then table.insert(sub_parts, track.album) end
-    local status = self.error or (STATE_LABELS[self.state] or self.state or "…")
+    local status = self.error or (STATE_LABELS[self.state] and T(STATE_LABELS[self.state]) or self.state or "…")
 
+    -- small cover next to title/artist while something is loaded
+    local has_track = track.title and track.title ~= "" and track.title ~= "—"
+    local thumb_side = Screen:scaleBySize(120)
+    local thumb_gap = Size.padding.large * 2
+    local text_w = has_track and (inner_w - thumb_side - thumb_gap) or inner_w
     local now_playing = VerticalGroup:new{
         align = "left",
         TextBoxWidget:new{
             text = title_text,
             face = Font:getFace("cfont", 30),
             bold = true,
-            width = inner_w,
+            width = text_w,
             height = Screen:scaleBySize(90),
             height_adjust = true,
             height_overflow_show_ellipsis = true,
@@ -164,7 +176,7 @@ function SonosRemote:build()
         TextBoxWidget:new{
             text = #sub_parts > 0 and table.concat(sub_parts, " · ") or " ",
             face = Font:getFace("cfont", 22),
-            width = inner_w,
+            width = text_w,
             height = Screen:scaleBySize(60),
             height_adjust = true,
             height_overflow_show_ellipsis = true,
@@ -173,9 +185,34 @@ function SonosRemote:build()
         TextBoxWidget:new{
             text = status,
             face = Font:getFace("cfont", 20),
-            width = inner_w,
+            width = text_w,
         },
     }
+    if has_track then
+        local thumb
+        local file = track.art and SpotifyUI.coverCached(track.art)
+        if file then
+            thumb = ImageWidget:new{
+                file = file, width = thumb_side, height = thumb_side,
+                scale_factor = 0, file_do_cache = false,
+            }
+        else
+            thumb = FrameContainer:new{
+                width = thumb_side, height = thumb_side, padding = 0, bordersize = 0,
+                background = Blitbuffer.COLOR_LIGHT_GRAY,
+                CenterContainer:new{
+                    dimen = Geom:new{ w = thumb_side, h = thumb_side },
+                    TextWidget:new{ text = "♪", face = Font:getFace("cfont", math.floor(thumb_side / 3)) },
+                },
+            }
+        end
+        now_playing = HorizontalGroup:new{
+            align = "top",
+            thumb,
+            HorizontalSpan:new{ width = thumb_gap },
+            now_playing,
+        }
+    end
 
     local big = 26
     local btn_h = Screen:scaleBySize(80)
@@ -185,25 +222,25 @@ function SonosRemote:build()
         buttons = {
             {
                 { text = "«", font_size = big + 8, height = btn_h, callback = function() self:command("previous") end },
-                { text = is_playing and "Pauza" or "Graj", font_size = big, height = btn_h,
+                { text = is_playing and T("Pause") or T("Play"), font_size = big, height = btn_h,
                   callback = function() self:command(is_playing and "pause" or "play") end },
                 { text = "»", font_size = big + 8, height = btn_h, callback = function() self:command("next") end },
             },
             {
                 { text = "− " .. VOLUME_STEP, font_size = big, height = btn_h,
                   callback = function() self:changeVolume(-VOLUME_STEP) end },
-                { text = "Gł. " .. (self.volume and tostring(self.volume) or "?"), font_size = big - 4,
+                { text = T("Vol. %1", self.volume and tostring(self.volume) or "?"), font_size = big - 4,
                   height = btn_h, enabled = (self:currentGroup() and #self:currentGroup().members > 1) or false,
                   callback = function() self:showRoomVolumes() end },
                 { text = "+ " .. VOLUME_STEP, font_size = big, height = btn_h,
                   callback = function() self:changeVolume(VOLUME_STEP) end },
             },
             {
-                { text = "Losowo: " .. ((self.mode and self.mode.shuffle) and "wł." or "wył."), font_size = 20,
+                { text = T("Shuffle: %1", (self.mode and self.mode.shuffle) and T("on") or T("off")), font_size = 20,
                   callback = function() self:togglePlayMode("shuffle") end },
-                { text = "Powtarzaj: " .. (({ none = "wył.", all = "wszystko", one = "utwór" })[self.mode and self.mode.rep or "none"]),
+                { text = T("Repeat: %1", T(({ none = "off", all = "all", one = "track" })[self.mode and self.mode.rep or "none"] or "off")),
                   font_size = 20, callback = function() self:togglePlayMode("repeat") end },
-                { text = "Wyłącznik: " .. (self.sleep_label or "wył."), font_size = 20,
+                { text = T("Sleep timer: %1", self.sleep_label or T("off")), font_size = 20,
                   callback = function() self:cycleSleepTimer() end },
             },
             (function()
@@ -218,18 +255,18 @@ function SonosRemote:build()
                     table.insert(row, { text = "Radio", font_size = big - 2, height = btn_h,
                         callback = function()
                             self:startSpotify({ kind = "radio", track_id = self.track.spotify_id,
-                                name = "Radio: " .. (self.track.title or "") })
+                                name = T("Radio: %1", self.track.title or "") })
                         end })
                 end
                 if #row < 3 then
-                    table.insert(row, { text = "Ulubione Sonos", font_size = big - 6, height = btn_h,
+                    table.insert(row, { text = T("Sonos favorites"), font_size = big - 6, height = btn_h,
                         callback = function() self:showLibrary() end })
                 end
                 return row
             end)(),
             {
-                { text = "Odśwież", font_size = 20, callback = function() self:refresh(true) end },
-                { text = "Ustawienia", font_size = 20, callback = function()
+                { text = T("Refresh"), font_size = 20, callback = function() self:refresh(true) end },
+                { text = T("Settings"), font_size = 20, callback = function()
                     self.plugin:showSettings(function()
                         self.groups = self.plugin:visibleGroups()
                         self:refresh(true)
@@ -289,7 +326,10 @@ function SonosRemote:fetch()
         self.mode = guarded(Sonos.getPlayMode, group.ip) or self.mode
         local rem = guarded(Sonos.getSleepTimer, group.ip)
         self.sleep_label = (rem and rem ~= "") and rem:match("^(%d+:%d+)") or nil
+        SleepScreen.update{ title = self.track.title, artist = self.track.artist, album = self.track.album,
+            art = self.track.art, state = state, room = group.name, ip = group.ip }
     end
+    self:loadArt()
     local new_snapshot = table.concat({ tostring(self.state), tostring(self.track.title),
         tostring(self.track.artist), tostring(self.volume), tostring(self.error) }, "|")
     -- mode/timer changes alone don't force a full-screen repaint on auto refresh
@@ -303,18 +343,35 @@ function SonosRemote:fetchConnect()
     if st and st.device_id == self.connect.id then
         self.error = nil
         self.state = st.is_playing and "PLAYING" or "PAUSED_PLAYBACK"
-        self.track = { title = st.title, artist = st.artist, album = st.album, spotify_id = st.track_id }
+        self.track = { title = st.title, artist = st.artist, album = st.album, spotify_id = st.track_id, art = st.image }
         self.volume = st.volume
         self.mode = { shuffle = st.shuffle, rep = st.rep }
+        SleepScreen.update{ title = st.title, artist = st.artist, album = st.album, art = st.image,
+            state = self.state, room = self.connect.name, connect_id = self.connect.id }
     elseif st or err == "none" then
         self.error = nil
         self.state = "STOPPED"
-        self.track = { title = "—", artist = st and ("Teraz gra na: " .. tostring(st.device_name)) or "Nic nie gra" }
+        self.track = { title = "—", artist = st and T("Now playing on: %1", tostring(st.device_name)) or T("Nothing is playing") }
     else
         self.error = Spotify.describeError(err)
     end
     local after = table.concat({ tostring(self.state), tostring(self.track.title), tostring(self.volume), tostring(self.error) }, "|")
+    self:loadArt()
     return before ~= after
+end
+
+--- Download the current cover in the background (once per URL), then repaint.
+function SonosRemote:loadArt()
+    local url = self.track and self.track.art
+    if not url or SpotifyUI.coverCached(url) then return end
+    self._art_tried = self._art_tried or {}
+    if self._art_tried[url] then return end
+    self._art_tried[url] = true
+    UIManager:scheduleIn(0.2, function()
+        if self.closed then return end
+        guarded(SpotifyUI.downloadCover, url)
+        if self.track and self.track.art == url and SpotifyUI.coverCached(url) then self:redraw() end
+    end)
 end
 
 --- Spotify Connect devices other than Sonos (TVs, computers, phones, speakers, a Raspberry Pi…).
@@ -335,10 +392,10 @@ function SonosRemote:showConnectDevices()
     local rows = {}
     for _, d in ipairs(devices) do
         if type(d) == "table" and d.id and not sonos_names[(d.name or ""):lower()] then
-            local label = d.name .. "  (" .. (({ Computer = "komputer", Smartphone = "telefon", Speaker = "głośnik",
+            local label = d.name .. "  (" .. T(({ Computer = "computer", Smartphone = "phone", Speaker = "speaker",
                 TV = "TV", Tablet = "tablet", CastVideo = "Chromecast", CastAudio = "Chromecast",
-                Automobile = "auto", AVR = "amplituner", STB = "dekoder" })[d.type] or (d.type or "?")) .. ")"
-            if d.is_restricted then label = label .. " — bez sterowania" end
+                Automobile = "car", AVR = "AV receiver", STB = "set-top box" })[d.type] or (d.type or "?")) .. ")"
+            if d.is_restricted then label = label .. " — " .. T("no remote control") end
             rows[#rows + 1] = { {
                 text = ((self.connect and self.connect.id == d.id) and "● " or "") .. label,
                 enabled = not d.is_restricted,
@@ -353,13 +410,13 @@ function SonosRemote:showConnectDevices()
         end
     end
     if #rows == 0 then
-        rows[1] = { { text = "Brak innych urządzeń Spotify.\nUrządzenie musi być włączone i mieć otwarte Spotify\n(TV, komputer, telefon, głośnik).", enabled = false } }
+        rows[1] = { { text = T("No other Spotify devices.\nThe device must be on and have Spotify open\n(TV, computer, phone, speaker)."), enabled = false } }
     end
     rows[#rows + 1] = {
-        { text = "Odśwież", callback = function() UIManager:close(dlg); self:showConnectDevices() end },
-        { text = "Zamknij", callback = function() UIManager:close(dlg) end },
+        { text = T("Refresh"), callback = function() UIManager:close(dlg); self:showConnectDevices() end },
+        { text = T("Close"), callback = function() UIManager:close(dlg) end },
     }
-    dlg = ButtonDialog:new{ title = "Inne urządzenia (Spotify Connect)", buttons = rows }
+    dlg = ButtonDialog:new{ title = T("Other devices (Spotify Connect)"), buttons = rows }
     UIManager:show(dlg)
 end
 
@@ -459,13 +516,13 @@ function SonosRemote:showLibrary()
     for _, e in ipairs(playlists) do add("♫ ", e) end
     if #item_table == 0 then
         UIManager:show(InfoMessage:new{
-            text = "Brak ulubionych i playlist.\n\nW aplikacji Sonos dodaj playlisty (np. ze Spotify) "
-                .. "do „Ulubione” (Moje Sonos) i otwórz tę listę ponownie.",
+            text = T("No favorites or playlists.\n\nIn the Sonos app, add playlists (e.g. from Spotify) "
+                .. "to Favorites (My Sonos) and open this list again."),
         })
         return
     end
     menu = Menu:new{
-        title = "Playlisty — " .. group.name,
+        title = T("Playlists — %1", group.name),
         item_table = item_table,
         width = Screen:getWidth(),
         height = Screen:getHeight(),
@@ -482,8 +539,8 @@ function SonosRemote:showSpotify()
     if not self:currentGroup() then return end
     if not self.plugin:spotify() then
         UIManager:show(InfoMessage:new{
-            text = "Ten Kindle nie jest połączony ze Spotify.\n\nNa Macu uruchom:\n"
-                .. "python3 tools/link_spotify.py <IP Kindla>\ni zaloguj się swoim kontem Spotify.",
+            text = T("This Kindle is not linked to Spotify.\n\nOn your computer run:\n"
+                .. "python3 tools/link_spotify.py <Kindle IP>\nand sign in with your Spotify account."),
         })
         return
     end
@@ -491,12 +548,12 @@ function SonosRemote:showSpotify()
 end
 
 --- Start Spotify playback without blocking: show the remote right away with
--- "Uruchamiam…", run the (slow) Sonos queue calls on the next UI tick.
+-- "Starting…", run the (slow) Sonos queue calls on the next UI tick.
 function SonosRemote:startSpotify(item, track_list, index)
     local group = self:currentGroup()
     if not group and not self.connect then return end
     self.state = "TRANSITIONING"
-    self.track = { title = "Uruchamiam…", artist = item.name, album = nil }
+    self.track = { title = T("Starting…"), artist = item.name, album = nil }
     self.error = nil
     self:redraw()
     self._play_seq = (self._play_seq or 0) + 1
@@ -537,7 +594,7 @@ function SonosRemote:joinRoom(coord, m)
     local mv = guarded(Sonos.getSpeakerVolume, m.ip)
     if gv and mv and mv > gv + 15 then
         guarded(Sonos.setSpeakerVolume, m.ip, gv)
-        toast(m.name .. ": obniżono głośność " .. mv .. " → " .. gv .. " (jak w grupie)")
+        toast(T("%1: volume lowered %2 → %3 (to match the group)", m.name, mv, gv))
     end
     return guarded(Sonos.joinGroup, m.ip, coord.uuid)
 end
@@ -565,8 +622,8 @@ function SonosRemote:showRoomVolumes()
             { text = "+ 5", callback = function() change(VOLUME_STEP) end },
         }
     end
-    rows[#rows + 1] = { { text = "Gotowe", callback = function() UIManager:close(dlg) end } }
-    dlg = ButtonDialog:new{ title = "Głośność pokoi w grupie", buttons = rows }
+    rows[#rows + 1] = { { text = T("Done"), callback = function() UIManager:close(dlg) end } }
+    dlg = ButtonDialog:new{ title = T("Room volumes in this group"), buttons = rows }
     UIManager:show(dlg)
 end
 
@@ -588,7 +645,7 @@ function SonosRemote:showGrouping()
     local rows = {}
     for _, m in ipairs(all) do
         if m.uuid == coord.uuid then
-            rows[#rows + 1] = { { text = "☑ " .. m.name .. "  (główny)", enabled = false } }
+            rows[#rows + 1] = { { text = "☑ " .. m.name .. "  (" .. T("main") .. ")", enabled = false } }
         elseif not hidden[m.uuid] then
             local on = in_group[m.uuid]
             rows[#rows + 1] = { { text = (on and "☑ " or "☐ ") .. m.name, callback = function()
@@ -615,14 +672,14 @@ function SonosRemote:showGrouping()
         self:refresh(true)
     end
     table.insert(rows, 1, {
-        { text = "Wszystkie pokoje", callback = function()
+        { text = T("All rooms"), callback = function()
             UIManager:close(dlg)
             for _, m in ipairs(all) do
                 if m.uuid ~= coord.uuid and not in_group[m.uuid] and not hidden[m.uuid] then self:joinRoom(coord, m) end
             end
             after()
         end },
-        { text = "Rozgrupuj", callback = function()
+        { text = T("Ungroup"), callback = function()
             UIManager:close(dlg)
             for _, m in ipairs(group.members) do
                 if m.uuid ~= coord.uuid then guarded(Sonos.leaveGroup, m.ip) end
@@ -631,14 +688,14 @@ function SonosRemote:showGrouping()
         end },
     })
     if #group.members > 1 then
-        rows[#rows + 1] = { { text = "Głośność poszczególnych pokoi…", callback = function()
+        rows[#rows + 1] = { { text = T("Volume of each room…"), callback = function()
             UIManager:close(dlg)
             self:showRoomVolumes()
         end } }
     end
-    rows[#rows + 1] = { { text = "Gotowe", callback = function() UIManager:close(dlg) end } }
+    rows[#rows + 1] = { { text = T("Done"), callback = function() UIManager:close(dlg) end } }
     dlg = ButtonDialog:new{
-        title = "Grają razem z: " .. coord.name .. "\nZaznacz pokoje, które mają grać to samo.",
+        title = T("Playing together with: %1\nTick the rooms that should play the same music.", coord.name),
         buttons = rows,
     }
     UIManager:show(dlg)
@@ -670,7 +727,7 @@ end
 
 local SLEEP_STEPS = { 15, 30, 60, 90, 0 }
 function SonosRemote:cycleSleepTimer()
-    if self.connect then toast("Wyłącznik czasowy działa tylko z głośnikami Sonos") return end
+    if self.connect then toast(T("The sleep timer only works with Sonos speakers")) return end
     local group = self:currentGroup()
     if not group then return end
     self._sleep_idx = ((self._sleep_idx or 0) % #SLEEP_STEPS) + 1
@@ -678,7 +735,7 @@ function SonosRemote:cycleSleepTimer()
     local ok, err = guarded(Sonos.setSleepTimer, group.ip, minutes)
     if not ok then toast(Sonos.describeError(err)) return end
     self.sleep_label = minutes > 0 and string.format("%d min", minutes) or nil
-    toast(minutes > 0 and ("Muzyka wyłączy się za " .. minutes .. " min") or "Wyłącznik czasowy wyłączony")
+    toast(minutes > 0 and T("Music will stop in %1 min", minutes) or T("Sleep timer off"))
     self:redraw()
 end
 
@@ -704,21 +761,25 @@ function SonosRemote:changeVolume(delta)
 end
 
 function SonosRemote:onShow()
+    self.closed = false
+    SleepScreen.remote_open = true
     self:refresh(true)
     self:scheduleAutoRefresh()
     return true
 end
 
 function SonosRemote:onCloseWidget()
+    self.closed = true
+    SleepScreen.remote_open = false
     self:unscheduleAutoRefresh()
     UIManager:setDirty(nil, "ui")
     if self.autostart then
         -- Launched from the home-screen scriptlet: offer to go straight back to the Kindle UI
         UIManager:nextTick(function()
             UIManager:show(ConfirmBox:new{
-                text = "Wrócić do ekranu głównego Kindle?",
-                ok_text = "Wyjdź",
-                cancel_text = "Zostań w KOReader",
+                text = T("Go back to the Kindle home screen?"),
+                ok_text = T("Exit"),
+                cancel_text = T("Stay in KOReader"),
                 ok_callback = function()
                     UIManager:broadcastEvent(Event:new("Exit"))
                 end,
@@ -753,6 +814,8 @@ function SonosPlugin:init()
         logger.info("kindlemusic: migrated settings from sonos.lua")
     end
     self.settings = LuaSettings:open(settings_file)
+    L10n.setLanguage(self.settings:readSetting("language") or "en")
+    SleepScreen.install(self)
     -- Spotify accounts linked to this Kindle (one file per account, written by tools/link_spotify.py)
     self:loadSpotifyAccounts()
     math.randomseed(os.time())
@@ -879,7 +942,7 @@ function SonosPlugin:playSpotify(group, item, track_list, index, connect_device)
     local context_uri, offset, track_uris
     if item.kind == "liked" then
         local uris = guarded(sp.likedTrackUris, sp, 50)
-        if not uris or #uris == 0 then return nil, "Brak polubionych utworów" end
+        if not uris or #uris == 0 then return nil, T("No liked songs") end
         track_uris, offset = uris, 1
     elseif item.kind == "tracks" or track_list then
         track_uris = {}
@@ -917,7 +980,7 @@ function SonosPlugin:playSpotify(group, item, track_list, index, connect_device)
         end
         if context_uri then
             local entry = Sonos.spotifyEntry(context_uri, item.name, sn)
-            if not entry then return nil, "Nieobsługiwany typ treści" end
+            if not entry then return nil, T("Unsupported content type") end
             local ok, err = guarded(Sonos.playItem, group, entry, function(ip)
                 -- set mode before Play so the first song is already random when shuffling
                 if item.shuffle then
@@ -955,7 +1018,7 @@ function SonosPlugin:playSpotify(group, item, track_list, index, connect_device)
     local function via_connect()
         local room = group.members[1] and group.members[1].name or group.name
         local dev = find_device(guarded(sp.devices, sp), room)
-        if not dev then return nil, "Spotify nie widzi głośnika „" .. room .. "”" end
+        if not dev then return nil, T("Spotify can't see the speaker “%1”", room) end
         local ok, err = guarded(sp.play, sp, dev.id, context_uri, track_uris, offset)
         if not ok then return nil, Spotify.describeError(err) end
         return true
@@ -963,7 +1026,7 @@ function SonosPlugin:playSpotify(group, item, track_list, index, connect_device)
 
     if connect_device then
         if item.kind == "radio" then
-            return nil, "Radio działa tylko na głośnikach Sonos (Spotify nie udostępnia radia przez API)"
+            return nil, T("Radio only works on Sonos speakers (Spotify doesn't offer radio through its API)")
         end
         if item.shuffle then guarded(sp.setShuffle, sp, connect_device.id, true) end
         local ok, err = guarded(sp.play, sp, connect_device.id, context_uri, track_uris,
@@ -999,31 +1062,31 @@ function SonosPlugin:showSpotifyAccounts()
             { text = (is_active and "● " or "") .. acc.name, callback = function()
                 UIManager:close(dialog)
                 self:setActiveSpotify(acc.id)
-                toast("Aktywne konto Spotify: " .. acc.name)
+                toast(T("Active Spotify account: %1", acc.name))
             end },
-            { text = "Usuń", callback = function()
+            { text = T("Remove"), callback = function()
                 UIManager:close(dialog)
                 UIManager:show(ConfirmBox:new{
-                    text = "Usunąć konto Spotify „" .. acc.name .. "” z tego Kindla?\n\n"
-                        .. "Dostęp możesz też odwołać na spotify.com → Konto → Aplikacje.",
-                    ok_text = "Usuń",
+                    text = T("Remove the Spotify account “%1” from this Kindle?\n\n"
+                        .. "You can also revoke access at spotify.com → Account → Apps.", acc.name),
+                    ok_text = T("Remove"),
                     ok_callback = function() self:removeSpotifyAccount(acc.id) end,
                 })
             end },
         })
     end
-    table.insert(buttons, { { text = "+ Dodaj konto…", callback = function()
+    table.insert(buttons, { { text = T("+ Add account…"), callback = function()
         UIManager:close(dialog)
         UIManager:show(InfoMessage:new{
-            text = "Aby dodać konto Spotify do tego Kindla, na Macu uruchom:\n\n"
-                .. "python3 tools/link_spotify.py <IP Kindla>\n\n"
-                .. "i zaloguj się tym kontem. Konto musi być dodane w panelu Spotify "
-                .. "(User Management, maks. 5 osób), a do odtwarzania przez Sonosa także w aplikacji Sonos.\n"
-                .. "Potem zrestartuj KOReader.",
+            text = T("To add a Spotify account to this Kindle, run on your computer:\n\n"
+                .. "python3 tools/link_spotify.py <Kindle IP>\n\n"
+                .. "and sign in with that account. The account must be added in the Spotify dashboard "
+                .. "(User Management, max. 5 people), and for playback through Sonos also in the Sonos app.\n"
+                .. "Then restart KOReader."),
         })
     end } })
     dialog = ButtonDialog:new{
-        title = #buttons > 1 and "Konta Spotify na tym Kindlu" or "Brak połączonych kont Spotify",
+        title = #buttons > 1 and T("Spotify accounts on this Kindle") or T("No linked Spotify accounts"),
         buttons = buttons,
     }
     UIManager:show(dialog)
@@ -1031,7 +1094,7 @@ end
 
 function SonosPlugin:onDispatcherRegisterActions()
     Dispatcher:registerAction("sonos_remote", {
-        category = "none", event = "ShowSonosRemote", title = _("Sonos: pilot"), general = true,
+        category = "none", event = "ShowSonosRemote", title = _("Kindle Music: remote"), general = true,
     })
 end
 
@@ -1132,7 +1195,7 @@ function SonosPlugin:discover(verbose)
     end
     if not groups and net.prefix then
         if verbose then
-            UIManager:show(InfoMessage:new{ text = "Szukam głośników Sonos w sieci…", timeout = 2 })
+            UIManager:show(InfoMessage:new{ text = T("Looking for Sonos speakers on the network…"), timeout = 2 })
             UIManager:forceRePaint()
         end
         local hosts = guarded(Sonos.scan, net.prefix, 1.5, net.ip) or {}
@@ -1146,7 +1209,7 @@ function SonosPlugin:discover(verbose)
         -- offline fallback: show the last known system (control will fail until it's reachable)
         local p = self.profile or profiles[self.settings:readSetting("active_profile") or ""]
         self.groups = groups_from_speakers(p and p.speakers or self.settings:readSetting("speakers") or DEFAULT_SPEAKERS)
-        if verbose then toast("Nie znaleziono głośników Sonos w tej sieci" .. (net.ssid and (" (" .. net.ssid .. ")") or "")) end
+        if verbose then toast(T("No Sonos speakers found on this network") .. (net.ssid and (" (" .. net.ssid .. ")") or "")) end
         return false
     end
 
@@ -1174,7 +1237,7 @@ function SonosPlugin:discover(verbose)
     self.profile = p
     self.groups = groups
     if verbose or is_new then
-        toast((is_new and "Nowy system: " or "System: ") .. p.name .. "\nGrup: " .. #groups)
+        toast(T(is_new and "New system: %1\nGroups: %2" or "System: %1\nGroups: %2", p.name, #groups))
     end
     return true
 end
@@ -1212,18 +1275,18 @@ function SonosPlugin:showSettings(on_change)
     local p = self.profile
     local rows = {}
     local net_ssid = self.network and self.network.ssid
-    table.insert(rows, { { text = "System: " .. (p and p.name or "nie wykryto")
+    table.insert(rows, { { text = T("System: %1", p and p.name or T("not found"))
         .. (net_ssid and ("\nWi-Fi: " .. net_ssid) or ""), enabled = false } })
     if p then
-        table.insert(rows, { { text = "Zmień nazwę systemu…", callback = function()
+        table.insert(rows, { { text = T("Rename system…"), callback = function()
             UIManager:close(dialog)
             local input
             input = InputDialog:new{
-                title = "Nazwa systemu Sonos",
+                title = T("Sonos system name"),
                 input = p.name,
                 buttons = { {
-                    { text = "Anuluj", id = "close", callback = function() UIManager:close(input) end },
-                    { text = "Zapisz", is_enter_default = true, callback = function()
+                    { text = T("Cancel"), id = "close", callback = function() UIManager:close(input) end },
+                    { text = T("Save"), is_enter_default = true, callback = function()
                         local name = input:getInputText()
                         UIManager:close(input)
                         if name and name ~= "" then self:profileSet("name", name) end
@@ -1234,7 +1297,7 @@ function SonosPlugin:showSettings(on_change)
             UIManager:show(input)
             input:onShowKeyboard()
         end } })
-        table.insert(rows, { { text = "— Widoczne pokoje —", enabled = false } })
+        table.insert(rows, { { text = "— " .. T("Visible rooms") .. " —", enabled = false } })
         local hidden = p.hidden or {}
         local room_row = {}
         for _, sp in ipairs(p.speakers or {}) do
@@ -1248,9 +1311,25 @@ function SonosPlugin:showSettings(on_change)
         end
         if #room_row > 0 then table.insert(rows, room_row) end
     end
+    table.insert(rows, { { text = "— Kindle Music —", enabled = false } })
+    table.insert(rows, {
+        { text = T("Language: %1", L10n.languageName(self.settings:readSetting("language") or "en")), callback = function()
+            local order = { en = "pl", pl = "auto", auto = "en" }
+            local lang = order[self.settings:readSetting("language") or "en"] or "en"
+            self.settings:saveSetting("language", lang)
+            self.settings:flush()
+            L10n.setLanguage(lang)
+            reopen()
+        end },
+        { text = (self.settings:isFalse("sleep_screen") and "☐ " or "☑ ") .. T("Sleep screen: now playing"), callback = function()
+            self.settings:saveSetting("sleep_screen", self.settings:isFalse("sleep_screen"))
+            self.settings:flush()
+            reopen()
+        end },
+    })
     table.insert(rows, { { text = "— Spotify —", enabled = false } })
-    table.insert(rows, { { text = "Konto: " .. (self.spotify_active and self.spotify_active.name or "brak")
-        .. "  (zmień / dodaj / usuń)", callback = function()
+    table.insert(rows, { { text = T("Account: %1", self.spotify_active and self.spotify_active.name or T("none"))
+        .. "  (" .. T("change / add / remove") .. ")", callback = function()
         UIManager:close(dialog)
         self:showSpotifyAccounts()
     end } })
@@ -1258,7 +1337,7 @@ function SonosPlugin:showSettings(on_change)
         local acc = self.spotify_active.id
         local map = p.spotify_sn or {}
         local cur = map[acc]
-        table.insert(rows, { { text = "Konto Spotify w aplikacji Sonos: " .. (cur and ("nr " .. cur) or "auto"),
+        table.insert(rows, { { text = T("Spotify account in the Sonos app: %1", cur and ("#" .. cur) or T("auto")),
             callback = function()
                 -- cycle auto → 1 → 2 → 3 → 4 → auto
                 local nxt = (not cur) and 1 or (cur < 4 and cur + 1 or nil)
@@ -1273,23 +1352,23 @@ function SonosPlugin:showSettings(on_change)
         if not p or hh ~= p.household then others[#others + 1] = op end
     end
     if #others > 0 then
-        table.insert(rows, { { text = "— Inne systemy Sonos —", enabled = false } })
+        table.insert(rows, { { text = "— " .. T("Other Sonos systems") .. " —", enabled = false } })
         for _, op in ipairs(others) do
             table.insert(rows, { { text = op.name .. (op.ssid and (" · Wi-Fi " .. op.ssid) or ""), callback = function()
                 UIManager:show(InfoMessage:new{
-                    text = "„" .. op.name .. "” jest w innej sieci.\n\nKindle steruje tylko systemem w sieci, "
-                        .. "z którą jest połączony. Połącz Kindle z Wi-Fi " .. (op.ssid and ("„" .. op.ssid .. "”") or "tamtego systemu")
-                        .. " — plugin przełączy się sam.",
+                    text = T("“%1” is on another network.\n\nThe Kindle only controls the system on the network "
+                        .. "it is connected to. Connect the Kindle to %2 and the plugin will switch by itself.",
+                        op.name, op.ssid and T("the Wi-Fi “%1”", op.ssid) or T("that system's Wi-Fi")),
                 })
             end } })
         end
     end
-    table.insert(rows, { { text = "Szukaj głośników ponownie", callback = function()
+    table.insert(rows, { { text = T("Find speakers again"), callback = function()
         UIManager:close(dialog)
         self:discover(true)
         if on_change then on_change() end
     end } })
-    dialog = ButtonDialog:new{ title = "Ustawienia Sonos", buttons = rows }
+    dialog = ButtonDialog:new{ title = T("Kindle Music settings"), buttons = rows }
     UIManager:show(dialog)
 end
 
@@ -1312,7 +1391,7 @@ function SonosPlugin:editSpeakerIP()
     local speakers = self.settings:readSetting("speakers") or {}
     local dialog
     dialog = InputDialog:new{
-        title = "IP dowolnego głośnika Sonos",
+        title = T("IP of any Sonos speaker"),
         input = speakers[1] and speakers[1].ip or "",
         input_type = "string",
         buttons = { {
@@ -1320,7 +1399,7 @@ function SonosPlugin:editSpeakerIP()
             { text = _("Save"), is_enter_default = true, callback = function()
                 local ip = dialog:getInputText():match("^%s*([%d%.]+)%s*$")
                 UIManager:close(dialog)
-                if not ip then toast("Niepoprawny adres IP") return end
+                if not ip then toast(T("Invalid IP address")) return end
                 table.insert(speakers, 1, { name = ip, ip = ip })
                 self.settings:saveSetting("speakers", speakers)
                 self.settings:flush()
@@ -1334,15 +1413,15 @@ end
 
 function SonosPlugin:addToMainMenu(menu_items)
     menu_items.sonos = {
-        text = _("Sonos"),
+        text = _("Kindle Music"),
         sorting_hint = "tools",
         sub_item_table = {
             {
-                text = "Otwórz pilota",
+                text = T("Open remote"),
                 callback = function() self:showRemote() end,
             },
             {
-                text = "Ustawienia…",
+                text = T("Settings…"),
                 keep_menu_open = true,
                 callback = function()
                     NetworkMgr:runWhenOnline(function()
@@ -1352,7 +1431,7 @@ function SonosPlugin:addToMainMenu(menu_items)
                 end,
             },
             {
-                text = "Szukaj głośników ponownie",
+                text = T("Find speakers again"),
                 keep_menu_open = true,
                 callback = function()
                     NetworkMgr:runWhenOnline(function() self:discover(true) end)
@@ -1363,13 +1442,13 @@ function SonosPlugin:addToMainMenu(menu_items)
                     local n = #(self.spotify_accounts or {})
                     local name = self.spotify_active and self.spotify_active.name
                     return name and ("Spotify: " .. name .. (n > 1 and (" (+" .. (n - 1) .. ")") or ""))
-                        or "Spotify: niepołączony"
+                        or ("Spotify: " .. T("not linked"))
                 end,
                 keep_menu_open = true,
                 callback = function() self:showSpotifyAccounts() end,
             },
             {
-                text = "Ustaw IP głośnika…",
+                text = T("Set speaker IP…"),
                 keep_menu_open = true,
                 callback = function() self:editSpeakerIP() end,
             },
