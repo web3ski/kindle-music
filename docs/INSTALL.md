@@ -6,10 +6,11 @@ On a Kindle jailbroken with [SpiderCat](https://kindlemodding.org/jailbreaking/S
 these lines into the home-screen search bar, one at a time:
 
     ;kpm add-repo https://web3ski.github.io/kindle-music/manifest.v2.json
+    ;kpm update
     ;kpm install koreader
     ;kpm install kindlemusic
 
-Then tap **Kindle Music** in the library. Update later with `;kpm upgrade`. The same steps are on
+Then tap **Kindle Music** in the library. Update later with `;kpm update` and then `;kpm upgrade`. The same steps are on
 https://web3ski.github.io/kindle-music/ (open it in the Kindle browser).
 
 ## Manual install (USB / SSH)

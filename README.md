@@ -39,6 +39,7 @@ open **https://web3ski.github.io/kindle-music/** in the Kindle browser, or type 
 the home-screen search bar:
 
     ;kpm add-repo https://web3ski.github.io/kindle-music/manifest.v2.json
+    ;kpm update
     ;kpm install koreader
     ;kpm install kindlemusic
 
