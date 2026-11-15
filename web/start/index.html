@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kindle Music: start</title>
+<style>
+  body { font-family: serif; font-size: 20px; line-height: 1.45; margin: 16px; max-width: 760px; color: #000; background: #fff; }
+  h1 { font-size: 30px; margin: 0 0 8px; }
+  h2 { font-size: 24px; margin: 30px 0 8px; border-bottom: 2px solid #000; }
+  ol { padding-left: 26px; }
+  li { margin: 6px 0; }
+  code { font-family: monospace; font-size: 19px; background: #eee; padding: 2px 4px; word-break: break-all; }
+  .cmd { border: 2px solid #000; margin: 10px 0; }
+  .cmd .t { display: block; padding: 10px; font-family: monospace; font-size: 20px; word-break: break-all; }
+  .cmd button { display: block; width: 100%; border: 0; border-top: 2px solid #000; padding: 8px; font-size: 18px; background: #eee; color: #000; }
+  .btn { display: inline-block; border: 3px solid #000; padding: 12px 18px; margin: 4px 0; font-size: 22px; text-decoration: none; color: #000; font-weight: bold; }
+  .warn { border-left: 6px solid #000; padding-left: 10px; }
+  small { font-size: 16px; }
+</style>
+</head>
+<body>
+<h1>Kindle Music</h1>
+<p>Control Sonos speakers (and optionally Spotify) from a Kindle. Follow the steps in order.
+You can read this page on your phone or computer and type the commands on the Kindle,
+or open it in the Kindle's own browser.</p>
+
+<p class="warn"><b>Alpha.</b> Jailbreaking can void your warranty and, in rare cases, brick the device. You do it at your own risk.
+Not affiliated with Amazon, Sonos, Spotify, IKEA or KindleModding.</p>
+
+<h2>Step 1: Check your Kindle</h2>
+<ol>
+  <li>On the Kindle open <b>Settings → Device Options → Device Info</b> and note the model and firmware version.</li>
+  <li>Check that this model and firmware are supported by the jailbreak:</li>
+</ol>
+<p><a class="btn" href="https://kindlemodding.org/jailbreak-wizard.html">Jailbreak wizard (KindleModding)</a></p>
+<p><small>Kindle Music needs a Kindle with Wi-Fi on the same network as your Sonos speakers.</small></p>
+
+<h2>Step 2: Jailbreak with SpiderCat (once)</h2>
+<p>Use the official SpiderCat guide from KindleModding. Follow it exactly, including when to turn
+airplane mode on or off. It installs the package manager (KPM) that the next step uses.</p>
+<p><a class="btn" href="https://kindlemodding.org/jailbreaking/SpiderCat/">SpiderCat guide</a></p>
+<p><small>We link to the official guide instead of copying it, so you always get the current steps.
+Already jailbroken with SpiderCat? Go to step 3.</small></p>
+
+<h2>Step 3: Install Kindle Music</h2>
+<p>On the Kindle <b>home screen</b>, tap the <b>search bar</b>, type the first line exactly and press Enter.
+Wait until it finishes, then do the next line.</p>
+
+<div class="cmd"><span class="t">;kpm add-repo https://web3ski.github.io/kindle-music/r</span><button type="button">Copy</button></div>
+<div class="cmd"><span class="t">;kpm update</span><button type="button">Copy</button></div>
+<div class="cmd"><span class="t">;kpm install koreader</span><button type="button">Copy</button></div>
+<div class="cmd"><span class="t">;kpm install kindlemusic</span><button type="button">Copy</button></div>
+
+<ul>
+  <li>Each line starts with a semicolon <code>;</code>.</li>
+  <li>Already have KOReader? Skip the third line.</li>
+  <li><code>https://</code> may be left out of the first line.</li>
+</ul>
+
+<h2>Step 4: Open it</h2>
+<p>A <b>Kindle Music</b> item appears in your library. Tap it to open the remote.
+Speakers on the same Wi-Fi are found automatically.</p>
+
+<h2>Updates</h2>
+<div class="cmd"><span class="t">;kpm update</span><button type="button">Copy</button></div>
+<div class="cmd"><span class="t">;kpm upgrade</span><button type="button">Copy</button></div>
+
+<h2>Something did not work?</h2>
+<ul>
+  <li><b>Nothing happens after Enter:</b> check that the line starts with <code>;</code> and that the jailbreak (step 2) finished. <code>;kpm update</code> on its own should show progress at the top of the screen.</li>
+  <li><b>Package not found:</b> run <code>;kpm update</code> again, then <code>;kpm install kindlemusic</code>.</li>
+  <li><b>"KOReader not found":</b> run <code>;kpm install koreader</code> first.</li>
+  <li>Still stuck? Open an issue with the exact message shown on screen:
+    <a href="https://github.com/web3ski/kindle-music/issues">github.com/web3ski/kindle-music/issues</a></li>
+</ul>
+
+<h2>Spotify (optional)</h2>
+<p>Needs Spotify Premium and your own free Spotify developer app. See
+<a href="https://github.com/web3ski/kindle-music/blob/main/docs/INSTALL.md">docs/INSTALL.md</a>.</p>
+
+<p><small>Source code: <a href="https://github.com/web3ski/kindle-music">github.com/web3ski/kindle-music</a> · AGPL-3.0</small></p>
+
+<script>
+(function () {
+  var boxes = document.querySelectorAll('.cmd');
+  for (var i = 0; i < boxes.length; i++) {
+    (function (box) {
+      var text = box.getElementsByTagName('span')[0];
+      var button = box.getElementsByTagName('button')[0];
+      button.onclick = function () {
+        var value = text.textContent;
+        var done = function () { button.innerHTML = 'Copied'; setTimeout(function () { button.innerHTML = 'Copy'; }, 1500); };
+        var fallback = function () {
+          var ok = false;
+          try {
+            var range = document.createRange();
+            range.selectNodeContents(text);
+            var sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            ok = document.execCommand('copy');
+          } catch (e) {}
+          if (ok) { done(); } else { button.innerHTML = 'Selected: copy it from the menu'; }
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(value).then(done, fallback);
+        } else {
+          fallback();
+        }
+      };
+    })(boxes[i]);
+  }
+})();
+</script>
+</body>
+</html>
