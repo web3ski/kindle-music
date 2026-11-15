@@ -27,11 +27,22 @@ plugin/kindlemusic.koplugin/   KOReader plugin
 plugin/scriptlet/        optional Kindle home-screen launcher
 tools/link_spotify.py    one-time Spotify account linking (PKCE)
 docs/                    install + security notes
-package/                 KPM packaging (placeholder)
-web/                     website (placeholder)
+package/                 KPM package (manifest + install hooks)
+web/                     landing page for the Kindle browser (GitHub Pages)
+tools/build_repo.sh      builds the .kpkg and the KPM repository index
 ```
 
-See [docs/INSTALL.md](docs/INSTALL.md).
+## Install
+
+On a Kindle jailbroken with [SpiderCat](https://kindlemodding.org/jailbreaking/SpiderCat/),
+open **https://web3ski.github.io/kindle-music/** in the Kindle browser, or type these lines into
+the home-screen search bar:
+
+    ;kpm add-repo https://web3ski.github.io/kindle-music/manifest.v2.json
+    ;kpm install koreader
+    ;kpm install kindlemusic
+
+Details and the manual (USB/SSH) method: [docs/INSTALL.md](docs/INSTALL.md).
 
 ## License
 

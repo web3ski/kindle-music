@@ -1,5 +1,19 @@
 # Install
 
+## From the Kindle (recommended)
+
+On a Kindle jailbroken with [SpiderCat](https://kindlemodding.org/jailbreaking/SpiderCat/), type
+these lines into the home-screen search bar, one at a time:
+
+    ;kpm add-repo https://web3ski.github.io/kindle-music/manifest.v2.json
+    ;kpm install koreader
+    ;kpm install kindlemusic
+
+Then tap **Kindle Music** in the library. Update later with `;kpm upgrade`. The same steps are on
+https://web3ski.github.io/kindle-music/ (open it in the Kindle browser).
+
+## Manual install (USB / SSH)
+
 Requires a jailbroken Kindle with KOReader installed (tested on Kindle Paperwhite 10, kindlehf firmware).
 
 1. Copy `plugin/kindlemusic.koplugin/` to `/mnt/us/koreader/plugins/` on the Kindle.

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kindle Music</title>
+<style>
+  body { font-family: serif; font-size: 20px; line-height: 1.45; margin: 16px; max-width: 760px; color: #000; background: #fff; }
+  h1 { font-size: 30px; margin: 0 0 8px; }
+  h2 { font-size: 24px; margin: 28px 0 8px; border-bottom: 2px solid #000; }
+  code { font-family: monospace; font-size: 19px; background: #eee; padding: 2px 4px; word-break: break-all; }
+  .cmd { display: block; border: 2px solid #000; padding: 10px; margin: 8px 0; font-family: monospace; font-size: 20px; word-break: break-all; }
+  .btn { display: inline-block; border: 3px solid #000; padding: 12px 18px; font-size: 22px; text-decoration: none; color: #000; font-weight: bold; }
+  .warn { border-left: 6px solid #000; padding-left: 10px; }
+  small { font-size: 16px; }
+</style>
+</head>
+<body>
+<h1>Kindle Music</h1>
+<p>Control Sonos speakers from your Kindle. Open this page in the Kindle's own web browser and follow the steps.</p>
+
+<p class="warn"><b>Alpha.</b> Jailbreaking can void your warranty and, in rare cases, brick the device. You do this at your own risk.
+Not affiliated with Amazon, Sonos, Spotify or IKEA.</p>
+
+<h2>Step 1: Jailbreak (once)</h2>
+<p>Check that your model and firmware are supported, turn on airplane mode only when the guide says so, then open the official SpiderCat page:</p>
+<p><a class="btn" href="https://kindlemodding.org/jailbreaking/SpiderCat/">SpiderCat guide</a></p>
+<p><small>Already jailbroken with SpiderCat? Skip to step 2.</small></p>
+
+<h2>Step 2: Install Kindle Music</h2>
+<p>On the Kindle home screen, tap the <b>search bar</b>, type each line exactly and press Enter. Wait for each one to finish.</p>
+<span class="cmd">;kpm add-repo https://web3ski.github.io/kindle-music/manifest.v2.json</span>
+<span class="cmd">;kpm install koreader</span>
+<span class="cmd">;kpm install kindlemusic</span>
+<p><small>Already have KOReader? You can skip the middle line.</small></p>
+
+<h2>Step 3: Open it</h2>
+<p>A <b>Kindle Music</b> item appears in your library. Tap it to open the remote. Speakers on the same Wi-Fi are found automatically.</p>
+
+<h2>Updates</h2>
+<span class="cmd">;kpm upgrade</span>
+
+<h2>Spotify (optional)</h2>
+<p>Needs Spotify Premium and your own free Spotify developer app. See
+<a href="https://github.com/web3ski/kindle-music/blob/main/docs/INSTALL.md">docs/INSTALL.md</a>.</p>
+
+<p><small>Source code and issues: <a href="https://github.com/web3ski/kindle-music">github.com/web3ski/kindle-music</a> · AGPL-3.0</small></p>
+</body>
+</html>
