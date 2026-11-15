@@ -1,0 +1,12 @@
+# Spotify / KOReader secrets and local settings — never commit
+tools/spotify_client_id.txt
+*.token
+sonos_spotify.lua
+sonos_spotify_accounts/
+sonos_spotify_cache.lua
+settings/
+plugin/**/settings/
+*.lua.old
+.env
+__pycache__/
+.DS_Store
