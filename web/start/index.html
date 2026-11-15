@@ -44,18 +44,19 @@ airplane mode on or off. It installs the package manager (KPM) that the next ste
 Already jailbroken with SpiderCat? Go to step 3.</small></p>
 
 <h2>Step 3: Install Kindle Music</h2>
+<p class="warn"><b>Coming soon.</b> Kindle Music is being submitted to the official KindleModding repository.
+Until it is listed there, the commands below will report that the package was not found.
+<a href="#ssh">Advanced: install over SSH now</a>.</p>
 <p>On the Kindle <b>home screen</b>, tap the <b>search bar</b>, type the first line exactly and press Enter.
 Wait until it finishes, then do the next line.</p>
 
-<div class="cmd"><span class="t">;kpm add-repo https://web3ski.github.io/kindle-music/r</span><button type="button">Copy</button></div>
 <div class="cmd"><span class="t">;kpm update</span><button type="button">Copy</button></div>
-<div class="cmd"><span class="t">;kpm install koreader</span><button type="button">Copy</button></div>
 <div class="cmd"><span class="t">;kpm install kindlemusic</span><button type="button">Copy</button></div>
 
 <ul>
   <li>Each line starts with a semicolon <code>;</code>.</li>
-  <li>Already have KOReader? Skip the third line.</li>
-  <li><code>https://</code> may be left out of the first line.</li>
+  <li>KOReader is installed automatically if you do not have it yet.</li>
+  <li>Text appears at the top of the screen for a moment and then the home screen comes back. That is normal.</li>
 </ul>
 
 <h2>Step 4: Open it</h2>
@@ -68,12 +69,18 @@ Speakers on the same Wi-Fi are found automatically.</p>
 
 <h2>Something did not work?</h2>
 <ul>
-  <li><b>Nothing happens after Enter:</b> check that the line starts with <code>;</code> and that the jailbreak (step 2) finished. <code>;kpm update</code> on its own should show progress at the top of the screen.</li>
-  <li><b>Package not found:</b> run <code>;kpm update</code> again, then <code>;kpm install kindlemusic</code>.</li>
-  <li><b>"KOReader not found":</b> run <code>;kpm install koreader</code> first.</li>
+  <li><b>Nothing happens after Enter:</b> check that the line starts with <code>;</code> and that the jailbreak (step 2) finished.</li>
+  <li><b>Package not found:</b> run <code>;kpm update</code> again, then <code>;kpm install kindlemusic</code>. Until Kindle Music is in the official repository, use the SSH method below.</li>
+  <li>The search bar only accepts letters, digits, spaces and dashes, so commands with a web address (such as <code>;kpm add-repo</code>) do not work from it.</li>
   <li>Still stuck? Open an issue with the exact message shown on screen:
     <a href="https://github.com/web3ski/kindle-music/issues">github.com/web3ski/kindle-music/issues</a></li>
 </ul>
+
+<h2 id="ssh">Advanced: install over SSH</h2>
+<p>If your Kindle has SSH enabled (for example with Jobman), run this from a computer on the same Wi-Fi.
+Replace <code>KINDLE_IP</code> with your Kindle's IP address.</p>
+<div class="cmd"><span class="t">ssh root@KINDLE_IP '/var/local/kmc/bin/kpm add-repo https://web3ski.github.io/kindle-music/r &amp;&amp; /var/local/kmc/bin/kpm update &amp;&amp; /var/local/kmc/bin/kpm -y install kindlemusic'</span><button type="button">Copy</button></div>
+<p><small>After that, <code>;kpm update</code> and <code>;kpm upgrade</code> in the search bar keep it up to date.</small></p>
 
 <h2>Spotify (optional)</h2>
 <p>Needs Spotify Premium and your own free Spotify developer app. See
