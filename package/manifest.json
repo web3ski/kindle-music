@@ -4,7 +4,7 @@
   "name": "Kindle Music",
   "author": "kindle-music contributors",
   "description": "Sonos remote (and optional Spotify) for KOReader on jailbroken Kindles.",
-  "version": [0, 2, 0],
+  "version": [0, 1, 0],
   "dependencies": [],
   "supported_platforms": ["kindlehf", "kindlepw2"]
 }
