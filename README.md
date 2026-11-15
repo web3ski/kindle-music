@@ -38,10 +38,14 @@ On a Kindle jailbroken with [SpiderCat](https://kindlemodding.org/jailbreaking/S
 follow **https://web3ski.github.io/kindle-music/start** (step by step, including the jailbreak), or type these lines into
 the home-screen search bar:
 
-    ;kpm add-repo https://web3ski.github.io/kindle-music/r
     ;kpm update
-    ;kpm install koreader
     ;kpm install kindlemusic
+
+(Being submitted to the official KindleModding repository. The Kindle search bar rejects
+commands containing `.`, `:` or `/`, so `;kpm add-repo <url>` cannot be typed there. Until the
+package is listed, add our repository over SSH:
+`kpm add-repo https://web3ski.github.io/kindle-music/r && kpm update && kpm -y install kindlemusic`
+with `kpm` at `/var/local/kmc/bin/kpm`.)
 
 Details and the manual (USB/SSH) method: [docs/INSTALL.md](docs/INSTALL.md).
 
