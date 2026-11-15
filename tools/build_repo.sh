@@ -6,6 +6,9 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUT=${1:-"$ROOT/_site"}
 case "$OUT" in /*) ;; *) OUT="$(pwd)/$OUT" ;; esac
 ID=kindlemusic
+# Public base URL of the Pages site. Artifact URLs are absolute so the repo also works
+# when added through the short alias (see below) or any redirect.
+BASE_URL=${BASE_URL:-https://web3ski.github.io/kindle-music}
 VERSION=$(python3 -c 'import json,sys; print(".".join(map(str, json.load(open(sys.argv[1]))["version"])))' "$ROOT/package/manifest.json")
 
 STAGE=$(mktemp -d)
@@ -24,7 +27,7 @@ mkdir -p "$ART_DIR"
       --no-recursion -czf "$ART_DIR/$KPKG" -T "$STAGE.list")
 rm -f "$STAGE.list"
 
-python3 - "$ROOT/package/manifest.json" "$OUT/manifest.v2.json" "packages/$ID/artifacts/$KPKG" <<'PY'
+python3 - "$ROOT/package/manifest.json" "$OUT/manifest.v2.json" "$BASE_URL/packages/$ID/artifacts/$KPKG" <<'PY'
 import json, sys
 pkg = json.load(open(sys.argv[1]))
 repo = {
@@ -48,6 +51,9 @@ repo = {
 }
 json.dump(repo, open(sys.argv[2], "w"), indent=2)
 PY
+
+# Short alias so users can type: ;kpm add-repo web3ski.github.io/kindle-music/r
+cp "$OUT/manifest.v2.json" "$OUT/r"
 
 cp -r "$ROOT/web/." "$OUT/"
 rm -f "$OUT/README.md"

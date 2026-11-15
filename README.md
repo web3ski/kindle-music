@@ -38,7 +38,7 @@ On a Kindle jailbroken with [SpiderCat](https://kindlemodding.org/jailbreaking/S
 open **https://web3ski.github.io/kindle-music/** in the Kindle browser, or type these lines into
 the home-screen search bar:
 
-    ;kpm add-repo https://web3ski.github.io/kindle-music/manifest.v2.json
+    ;kpm add-repo web3ski.github.io/kindle-music/r
     ;kpm update
     ;kpm install koreader
     ;kpm install kindlemusic
