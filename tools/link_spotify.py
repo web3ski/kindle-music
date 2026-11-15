@@ -7,7 +7,7 @@ Link a Kindle (kindlemusic.koplugin) with a Spotify account — run once per Kin
 1. Opens the Spotify login in your browser (Authorization Code + PKCE, no client secret).
 2. Receives the code on http://127.0.0.1:8888/callback and exchanges it for a refresh token.
 3. Writes koreader/settings/sonos_spotify_accounts/<spotify-user-id>.lua on the Kindle over SSH
-   (several accounts can be linked; pick the active one on the Kindle: Narzędzia → Sonos → Spotify) (you type the Kindle
+   (several accounts can be linked; pick the active one on the Kindle: Tools → Kindle Music → Spotify) (you type the Kindle
    root password when ssh asks). The token is never stored on this Mac.
 
 Client ID: pass --client-id once; it is remembered in tools/spotify_client_id.txt
@@ -82,8 +82,8 @@ def wait_for_code(state):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            msg = ("Gotowe! Możesz zamknąć tę kartę i wrócić do terminala." if ok
-                   else "Błąd: " + result.get("error", "?"))
+            msg = ("Done! You can close this tab and go back to the terminal." if ok
+                   else "Error: " + result.get("error", "?"))
             self.wfile.write(f"<html><body style='font:20px sans-serif;padding:40px'>{msg}</body></html>".encode())
             threading.Thread(target=self.server.shutdown, daemon=True).start()
 
@@ -93,7 +93,7 @@ def wait_for_code(state):
     srv = http.server.HTTPServer(("127.0.0.1", 8888), Handler)
     srv.serve_forever()
     if "code" not in result:
-        sys.exit("Logowanie nieudane: " + result.get("error", "?"))
+        sys.exit("Sign-in failed: " + result.get("error", "?"))
     return result["code"]
 
 
@@ -143,8 +143,8 @@ def main():
         "state": state,
         "show_dialog": "true",  # always ask which account — important when linking several Kindles
     })
-    print("Otwieram przeglądarkę z logowaniem do Spotify…")
-    print("Jeśli się nie otworzy, wejdź ręcznie na:\n" + auth_url + "\n")
+    print("Opening the Spotify sign-in page in your browser…")
+    print("If it doesn't open, go to:\n" + auth_url + "\n")
     webbrowser.open(auth_url)
     code = wait_for_code(state)
 
@@ -157,9 +157,9 @@ def main():
     })
     me = get_json("https://api.spotify.com/v1/me", tok["access_token"])
     name = me.get("display_name") or me.get("id")
-    print(f"Zalogowano jako: {name} (konto {me.get('product', '?')})")
+    print(f"Signed in as: {name} (account {me.get('product', '?')})")
     if me.get("product") != "premium":
-        print("Uwaga: bez Spotify Premium sterowanie odtwarzaniem przez Spotify Connect nie zadziała.")
+        print("Note: without Spotify Premium, playback control through Spotify Connect will not work.")
 
     lines = [
         "-- written by tools/link_spotify.py — Spotify link for this Kindle (keep private)",
@@ -181,11 +181,11 @@ def main():
     acc_id = "".join(c for c in me.get("id", "account") if c.isalnum() or c in "-_") or "account"
     remote = f"{REMOTE_DIR}/{acc_id}.lua"
     ssh += [f"root@{args.kindle_ip}", f"mkdir -p {REMOTE_DIR} && cat > {remote}.tmp && mv {remote}.tmp {remote}"]
-    print(f"Wgrywam połączenie na Kindle {args.kindle_ip} (podaj hasło SSH Kindla)…")
+    print(f"Copying the link to the Kindle at {args.kindle_ip} (enter the Kindle's SSH password)…")
     r = subprocess.run(ssh, input=content.encode())
     if r.returncode != 0:
-        sys.exit("Nie udało się zapisać na Kindle (czy SSH w Jobmanie jest włączone?)")
-    print("Gotowe. Zrestartuj KOReader na Kindle (albo otwórz pilota od nowa), potem: pilot → Spotify.")
+        sys.exit("Could not write to the Kindle (is SSH enabled?)")
+    print("Done. Restart KOReader on the Kindle (or reopen the remote), then: remote → Spotify.")
 
 
 if __name__ == "__main__":

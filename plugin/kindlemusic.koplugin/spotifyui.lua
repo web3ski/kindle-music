@@ -1,7 +1,7 @@
 --[[--
 Spotify browser for the Sonos remote: e-ink friendly pages with cover thumbnails.
 
-Screens: Home (section tiles + "Ostatnio odtwarzane"), lists of playlists/albums/
+Screens: Home (section tiles + "Recently played"), lists of playlists/albums/
 artists/tracks, artist page (albums), album/playlist page (tracks), search.
 Covers are downloaded lazily per page into a cache dir and shown in grayscale.
 
@@ -39,6 +39,7 @@ local socketutil = require("socketutil")
 local Screen = Device.screen
 
 local Spotify = require("spotify")
+local T = require("l10n").T
 
 local CACHE_DIR = DataStorage:getDataDir() .. "/cache/sonos-covers"
 local CACHE_MAX_FILES = 600
@@ -71,10 +72,24 @@ local function ensure_cache_dir()
     end
 end
 
+--- Short stable hash (hex) for URLs without a usable ID (e.g. Sonos /getaa?… art links).
+local function url_hash(s)
+    local bit = require("bit")
+    local h1, h2 = 5381, 52711
+    for i = 1, #s do
+        local c = s:byte(i)
+        h1 = bit.tobit(h1 * 33 + c)
+        h2 = bit.tobit(bit.bxor(h2 * 31, c))
+    end
+    return bit.tohex(h1) .. bit.tohex(h2)
+end
+
 local function cover_path(url)
     if not url then return nil end
+    -- Spotify image URLs end with a long unique ID; anything else gets hashed
     local key = url:match("([%w]+)$")
-    return key and (CACHE_DIR .. "/" .. key .. ".jpg") or nil
+    if not key or #key < 20 then key = "u" .. url_hash(url) end
+    return CACHE_DIR .. "/" .. key .. ".jpg"
 end
 
 local function cover_cached(url)
@@ -90,9 +105,9 @@ local function download_cover(url)
     local f = io.open(tmp, "wb")
     if not f then return end
     socketutil:set_timeout(3, 8)
-    local ok, code = pcall(http.request, { url = url, sink = ltn12.sink.file(f) })
+    local ok, code, status = pcall(http.request, { url = url, sink = ltn12.sink.file(f) })
     socketutil:reset_timeout()
-    if ok and code == 1 then
+    if ok and code == 1 and (status == nil or status == 200) then
         os.rename(tmp, path)
     else
         os.remove(tmp)
@@ -223,7 +238,7 @@ local Page = InputContainer:extend{
     items = nil,        -- list of normalised items
     header_buttons = nil, -- ButtonTable rows shown above the list
     on_tap = nil,       -- function(item)
-    empty_text = "Pusto",
+    empty_text = nil,
     covers_fullscreen = true,
     page = 1,
 }
@@ -282,14 +297,14 @@ function Page:build()
     if #self.items == 0 then
         table.insert(list, CenterContainer:new{
             dimen = Geom:new{ w = W, h = row_h * 2 },
-            TextBoxWidget:new{ text = self.empty_text, face = Font:getFace("cfont", 20), width = inner_w, alignment = "center" },
+            TextBoxWidget:new{ text = self.empty_text or T("Empty"), face = Font:getFace("cfont", 20), width = inner_w, alignment = "center" },
         })
     end
 
     local footer = ButtonTable:new{
         width = inner_w,
         buttons = { {
-            { text = "‹ Wstecz", callback = function() self.browser:back() end },
+            { text = T("‹ Back"), callback = function() self.browser:back() end },
             { text = "«", enabled = self.page > 1, callback = function() self:goPage(self.page - 1) end },
             { text = string.format("%d / %d", self.page, self.pages), enabled = false },
             { text = "»", enabled = self.page < self.pages, callback = function() self:goPage(self.page + 1) end },
@@ -419,14 +434,14 @@ end
 
 --- Run a loader with a short "loading" message; show an error toast on failure.
 function Browser:load(fn, ...)
-    local msg = InfoMessage:new{ text = "Ładowanie…", dismissable = false }
+    local msg = InfoMessage:new{ text = T("Loading…"), dismissable = false }
     UIManager:show(msg)
     UIManager:forceRePaint()
     local res, err = guarded(fn, self.sp, ...)
     UIManager:close(msg)
     if not res then
         if tostring(err):match("[Ss]cope") then
-            toast("Ta sekcja wymaga ponownego połączenia ze Spotify (nowe uprawnienia).\nUruchom tools/link_spotify.py na Macu.")
+            toast(T("This section needs Spotify to be linked again (new permissions).\nRun tools/link_spotify.py on your computer."))
         else
             toast(Spotify.describeError(err))
         end
@@ -460,7 +475,7 @@ function Browser:play(item, track_list, index)
     self.remote:startSpotify(item, track_list, index)
 end
 
---- Hide the Spotify screens but keep them (pages, scroll position, loaded data) for "‹ Wstecz".
+--- Hide the Spotify screens but keep them (pages, scroll position, loaded data) for "‹ Back".
 function Browser:hide()
     self.saved = self.stack
     for i = #self.stack, 1, -1 do UIManager:close(self.stack[i]) end
@@ -499,39 +514,39 @@ function Browser:itemMenu(item, page)
         rows[#rows + 1] = { { text = text, callback = function() UIManager:close(dlg); fn() end } }
     end
     if item.kind == "track" then
-        add("▶ Odtwórz", function() page.on_tap(item) end)
-        add("Radio z tego utworu", function()
-            self:play({ kind = "radio", track_id = item.id, name = "Radio: " .. (item.name or "") })
+        add(T("▶ Play"), function() page.on_tap(item) end)
+        add(T("Radio from this song"), function()
+            self:play({ kind = "radio", track_id = item.id, name = T("Radio: %1", item.name or "") })
         end)
         if item.artist_names and item.artist_names[1] then
-            add("Mix artysty: " .. item.artist_names[1], function()
+            add(T("Artist mix: %1", item.artist_names[1]), function()
                 self:artistMix(item.artist_names[1], item, item.artist_ids and item.artist_ids[1])
             end)
         end
         if item.album_id then
-            add("Przejdź do albumu", function()
+            add(T("Go to album"), function()
                 self:albumPage({ kind = "album", id = item.album_id, uri = "spotify:album:" .. item.album_id,
                     name = item.album_name or "Album", sub = item.artist_names and item.artist_names[1] or "",
                     image = item.image })
             end)
         end
         if item.artist_ids and item.artist_ids[1] then
-            add("Przejdź do artysty", function()
+            add(T("Go to artist"), function()
                 self:artistPage({ kind = "artist", id = item.artist_ids[1], name = item.artist_names[1] })
             end)
         end
     elseif item.kind == "album" or item.kind == "playlist" then
-        add("▶ Odtwórz", function() self:play(item) end)
-        add("Odtwórz losowo", function()
+        add(T("▶ Play"), function() self:play(item) end)
+        add(T("Shuffle play"), function()
             self:play({ kind = item.kind, uri = item.uri, name = item.name, shuffle = true, total = item.total })
         end)
-        add("Otwórz", function() self:open(item) end)
+        add(T("Open"), function() self:open(item) end)
     elseif item.kind == "artist" then
-        add("Radio artysty", function()
-            self:play({ kind = "radio", artist_id = item.id, name = "Radio: " .. (item.name or "") })
+        add(T("Artist radio"), function()
+            self:play({ kind = "radio", artist_id = item.id, name = T("Radio: %1", item.name or "") })
         end)
-        add("Mix artysty", function() self:artistMix(item.name, nil, item.id) end)
-        add("Otwórz", function() self:open(item) end)
+        add(T("Artist mix"), function() self:artistMix(item.name, nil, item.id) end)
+        add(T("Open"), function() self:open(item) end)
     else
         return
     end
@@ -543,7 +558,7 @@ end
 function Browser:artistMix(artist_name, seed, artist_id)
     local tracks = self:load(self.sp.artistMix, artist_name, seed, artist_id)
     if not tracks or #tracks == 0 then return end
-    self:play({ kind = "tracks", name = "Mix: " .. artist_name }, tracks, 1)
+    self:play({ kind = "tracks", name = T("Mix: %1", artist_name) }, tracks, 1)
 end
 
 function Browser:listPage(title, items, empty)
@@ -559,46 +574,46 @@ function Browser:home()
     end
     local tiles = {
         {
-            { text = "Szukaj", callback = function() self:searchDialog() end },
-            { text = "♥ Polubione", callback = function()
-                self:play({ kind = "liked", name = "Polubione utwory" }) end },
+            { text = T("Search"), callback = function() self:searchDialog() end },
+            { text = T("♥ Liked"), callback = function()
+                self:play({ kind = "liked", name = T("Liked songs") }) end },
         },
         {
-            { text = "Playlisty", callback = function() self:playlistsPage() end },
-            { text = "Albumy", callback = function()
-                self:listPage("Zapisane albumy", self:load(sp.savedAlbums), "Brak zapisanych albumów") end },
+            { text = T("Playlists"), callback = function() self:playlistsPage() end },
+            { text = T("Albums"), callback = function()
+                self:listPage(T("Saved albums"), self:load(sp.savedAlbums), T("No saved albums")) end },
         },
         {
-            { text = "Top artyści", callback = function()
-                self:listPage("Twoi top artyści", self:load(sp.topArtists), "Brak danych") end },
-            { text = "Top utwory", callback = function()
+            { text = T("Top artists"), callback = function()
+                self:listPage(T("Your top artists"), self:load(sp.topArtists), T("No data")) end },
+            { text = T("Top tracks"), callback = function()
                 local tracks = self:load(sp.topTracks)
                 if not tracks then return end
-                self:push{ title = "Twoje top utwory", subtitle = "→ " .. self:roomName(), items = tracks,
-                    header_buttons = { { { text = "▶ Odtwórz wszystkie", callback = function()
-                        self:play({ kind = "tracks", name = "Top utwory" }, tracks, 1) end } } },
+                self:push{ title = T("Your top tracks"), subtitle = "→ " .. self:roomName(), items = tracks,
+                    header_buttons = { { { text = T("▶ Play all"), callback = function()
+                        self:play({ kind = "tracks", name = T("Top tracks") }, tracks, 1) end } } },
                     on_tap = function(it)
                         for i, t in ipairs(tracks) do if t == it then return self:play(it, tracks, i) end end
                     end }
             end },
         },
         {
-            { text = "Obserwowani", callback = function()
-                self:listPage("Obserwowani artyści", self:load(sp.followedArtists), "Nie obserwujesz artystów") end },
+            { text = T("Following"), callback = function()
+                self:listPage(T("Followed artists"), self:load(sp.followedArtists), T("You don't follow any artists")) end },
         },
     }
-    -- "Ostatnio odtwarzane" fills the list part of the home page (like Spotify's Recents)
+    -- "Recently played" fills the list part of the home page (like Spotify's Recents)
     local recent = guarded(sp.recent, sp)
-    local items, empty = recent or {}, "Ostatnio odtwarzane pojawią się tutaj"
+    local items, empty = recent or {}, T("Recently played items will appear here")
     if not recent then
         -- fall back to the user's playlists when recents need re-linking
         items = guarded(sp.myPlaylists, sp) or {}
-        empty = "Brak danych"
+        empty = T("No data")
     end
     self:push{
         title = "Spotify",
         subtitle = (self.plugin.spotify_settings:readSetting("account_name") or "")
-            .. " → " .. self:roomName() .. (recent and " · Ostatnio odtwarzane" or " · Twoje playlisty"),
+            .. " → " .. self:roomName() .. (recent and (" · " .. T("Recently played")) or (" · " .. T("Your playlists"))),
         items = items,
         empty_text = empty,
         header_buttons = tiles,
@@ -607,18 +622,18 @@ function Browser:home()
 end
 
 local SORTS = {
-    { id = "spotify", label = "Jak w Spotify" },
-    { id = "changed", label = "Ostatnio zmienione" },
-    { id = "played", label = "Ostatnio grane" },
+    { id = "spotify", label = "As in Spotify" },
+    { id = "changed", label = "Recently changed" },
+    { id = "played", label = "Recently played" },
     { id = "az", label = "A–Z" },
-    { id = "size", label = "Liczba utworów" },
+    { id = "size", label = "Number of tracks" },
 }
 local function sort_label(id)
-    for _, s in ipairs(SORTS) do if s.id == id then return s.label end end
-    return SORTS[1].label
+    for _, s in ipairs(SORTS) do if s.id == id then return T(s.label) end end
+    return T(SORTS[1].label)
 end
 
---- "Ostatnio zmienione": date of the newest item, cached per playlist snapshot.
+--- "Recently changed": date of the newest item, cached per playlist snapshot.
 function Browser:lastAddedDates(playlists)
     local LuaSettings = require("luasettings")
     local cache = LuaSettings:open(DataStorage:getSettingsDir() .. "/sonos_spotify_cache.lua")
@@ -656,7 +671,7 @@ function Browser:sortPlaylists(list, mode)
         end)
         for _, p in ipairs(sorted) do
             local d = (dates[p.id] or {}).date
-            p.sub = p.sub_base .. (d and d ~= "" and (" · zm. " .. d:sub(1, 10)) or "")
+            p.sub = p.sub_base .. (d and d ~= "" and (" · " .. T("changed %1", d:sub(1, 10))) or "")
         end
     elseif mode == "played" then
         local recent = guarded(self.sp.recent, self.sp) or {}
@@ -678,23 +693,23 @@ function Browser:playlistsPage()
     local all = self:load(self.sp.myPlaylists)
     if not all then return end
     for _, p in ipairs(all) do
-        if p.total then p.sub = p.sub .. " · " .. p.total .. " utw." end
+        if p.total then p.sub = p.sub .. " · " .. T("%1 tracks", p.total) end
         p.sub_base = p.sub
     end
     local mode = self.plugin.settings:readSetting("spotify_playlist_sort") or "spotify"
     local page
     local function header()
-        return { { { text = "Sortuj: " .. sort_label(mode) .. " ▾", callback = function()
+        return { { { text = T("Sort: %1", sort_label(mode)) .. " ▾", callback = function()
             local ButtonDialog = require("ui/widget/buttondialog")
             local dlg
             local rows = {}
             for _, s in ipairs(SORTS) do
-                rows[#rows + 1] = { { text = (s.id == mode and "● " or "") .. s.label, callback = function()
+                rows[#rows + 1] = { { text = (s.id == mode and "● " or "") .. T(s.label), callback = function()
                     UIManager:close(dlg)
                     mode = s.id
                     self.plugin.settings:saveSetting("spotify_playlist_sort", mode)
                     self.plugin.settings:flush()
-                    local msg = InfoMessage:new{ text = "Sortuję…", dismissable = false }
+                    local msg = InfoMessage:new{ text = T("Sorting…"), dismissable = false }
                     UIManager:show(msg); UIManager:forceRePaint()
                     page.items = self:sortPlaylists(all, mode)
                     UIManager:close(msg)
@@ -704,36 +719,36 @@ function Browser:playlistsPage()
                     page:loadCovers()
                 end } }
             end
-            dlg = ButtonDialog:new{ title = "Sortuj playlisty", buttons = rows }
+            dlg = ButtonDialog:new{ title = T("Sort playlists"), buttons = rows }
             UIManager:show(dlg)
         end } } }
     end
-    page = self:push{ title = "Twoje playlisty", subtitle = "→ " .. self:roomName(),
-        items = self:sortPlaylists(all, mode), empty_text = "Brak playlist",
+    page = self:push{ title = T("Your playlists"), subtitle = "→ " .. self:roomName(),
+        items = self:sortPlaylists(all, mode), empty_text = T("No playlists"),
         header_buttons = header(), on_tap = function(it) self:open(it) end }
 end
 
 function Browser:artistPage(artist)
     local albums = self:load(self.sp.artistAlbums, artist.id)
     if not albums then return end
-    self:push{ title = artist.name, subtitle = "Albumy i single → " .. self:roomName(), items = albums,
+    self:push{ title = artist.name, subtitle = T("Albums and singles") .. " → " .. self:roomName(), items = albums,
         header_buttons = { {
-            { text = "Radio artysty", callback = function()
-                self:play({ kind = "radio", artist_id = artist.id, name = "Radio: " .. (artist.name or "") })
+            { text = T("Artist radio"), callback = function()
+                self:play({ kind = "radio", artist_id = artist.id, name = T("Radio: %1", artist.name or "") })
             end },
-            { text = "Mix artysty", callback = function() self:artistMix(artist.name, nil, artist.id) end },
+            { text = T("Artist mix"), callback = function() self:artistMix(artist.name, nil, artist.id) end },
         } },
-        empty_text = "Brak albumów", on_tap = function(it) self:open(it) end }
+        empty_text = T("No albums"), on_tap = function(it) self:open(it) end }
 end
 
 function Browser:albumPage(album)
     local tracks = guarded(self.sp.albumTracks, self.sp, album) or {}
     self:push{
         title = album.name, subtitle = (album.sub or "") .. " → " .. self:roomName(),
-        items = tracks, empty_text = "Nie udało się pobrać utworów — możesz odtworzyć cały album",
+        items = tracks, empty_text = T("Couldn't load the tracks. You can still play the whole album"),
         header_buttons = { {
-            { text = "▶ Odtwórz album", callback = function() self:play(album) end },
-            { text = "Losowo", callback = function()
+            { text = T("▶ Play album"), callback = function() self:play(album) end },
+            { text = T("Shuffle"), callback = function()
                 self:play({ kind = album.kind, uri = album.uri, name = album.name, shuffle = true, total = #tracks })
             end },
         } },
@@ -742,10 +757,10 @@ function Browser:albumPage(album)
 end
 
 local TRACK_SORTS = {
-    { id = "order", label = "Jak w playliście" },
-    { id = "added", label = "Ostatnio dodane" },
+    { id = "order", label = "Playlist order" },
+    { id = "added", label = "Recently added" },
     { id = "az", label = "A–Z" },
-    { id = "artist", label = "Wykonawca" },
+    { id = "artist", label = "Artist" },
 }
 
 local function sort_tracks(tracks, mode)
@@ -773,8 +788,8 @@ local function sort_tracks(tracks, mode)
 end
 
 local function track_sort_label(id)
-    for _, so in ipairs(TRACK_SORTS) do if so.id == id then return so.label end end
-    return TRACK_SORTS[1].label
+    for _, so in ipairs(TRACK_SORTS) do if so.id == id then return T(so.label) end end
+    return T(TRACK_SORTS[1].label)
 end
 
 function Browser:playlistPage(pl)
@@ -786,7 +801,7 @@ function Browser:playlistPage(pl)
     local can_sort = tracks and #tracks > 1
     if not tracks then
         -- Spotify only exposes tracks of playlists you own (2026 API rules)
-        tracks, note = {}, "Spotify nie udostępnia listy utworów tej playlisty — możesz ją odtworzyć w całości"
+        tracks, note = {}, T("Spotify doesn't share the tracks of this playlist. You can still play all of it")
     end
     for _, t in ipairs(tracks) do t.sub_base = t.sub_base or t.sub end
     local mode = can_sort and (self.plugin.settings:readSetting("spotify_track_sort") or "order") or "order"
@@ -794,31 +809,31 @@ function Browser:playlistPage(pl)
     local function resort()
         shown = sort_tracks(tracks, mode)
         for _, t in ipairs(shown) do
-            t.sub = t.sub_base .. ((mode == "added" and t.added_at) and (" · dod. " .. t.added_at:sub(1, 10)) or "")
+            t.sub = t.sub_base .. ((mode == "added" and t.added_at) and (" · " .. T("added %1", t.added_at:sub(1, 10))) or "")
         end
     end
     resort()
     local page
     local function header()
         local rows = { {
-            { text = "▶ Odtwórz", callback = function()
+            { text = T("▶ Play"), callback = function()
                 if mode == "order" or #shown == 0 then
                     self:play(pl)
                 else
                     self:play({ kind = "tracks", name = pl.name }, shown, 1)
                 end
             end },
-            { text = "Losowo", callback = function()
+            { text = T("Shuffle"), callback = function()
                 self:play({ kind = pl.kind, uri = pl.uri, name = pl.name, shuffle = true, total = pl.total })
             end },
         } }
         if can_sort then
-            rows[2] = { { text = "Sortuj: " .. track_sort_label(mode) .. " ▾", callback = function()
+            rows[2] = { { text = T("Sort: %1", track_sort_label(mode)) .. " ▾", callback = function()
                 local ButtonDialog = require("ui/widget/buttondialog")
                 local dlg
                 local opts = {}
                 for _, so in ipairs(TRACK_SORTS) do
-                    opts[#opts + 1] = { { text = (so.id == mode and "● " or "") .. so.label, callback = function()
+                    opts[#opts + 1] = { { text = (so.id == mode and "● " or "") .. T(so.label), callback = function()
                         UIManager:close(dlg)
                         mode = so.id
                         self.plugin.settings:saveSetting("spotify_track_sort", mode)
@@ -831,7 +846,7 @@ function Browser:playlistPage(pl)
                         page:loadCovers()
                     end } }
                 end
-                dlg = ButtonDialog:new{ title = "Sortuj utwory", buttons = opts }
+                dlg = ButtonDialog:new{ title = T("Sort tracks"), buttons = opts }
                 UIManager:show(dlg)
             end } }
         end
@@ -839,7 +854,7 @@ function Browser:playlistPage(pl)
     end
     page = self:push{
         title = pl.name, subtitle = (pl.sub or "") .. " → " .. self:roomName(),
-        items = shown, empty_text = note or "Pusta playlista",
+        items = shown, empty_text = note or T("Empty playlist"),
         header_buttons = header(),
         -- unsorted: play the playlist itself from this song (playlist order continues);
         -- sorted: queue the songs in the order shown, starting from the tapped one
@@ -855,18 +870,18 @@ end
 function Browser:searchDialog()
     local dialog
     dialog = InputDialog:new{
-        title = "Szukaj w Spotify",
+        title = T("Search Spotify"),
         input = self.last_query or "",
         buttons = { {
-            { text = "Anuluj", id = "close", callback = function() UIManager:close(dialog) end },
-            { text = "Szukaj", is_enter_default = true, callback = function()
+            { text = T("Cancel"), id = "close", callback = function() UIManager:close(dialog) end },
+            { text = T("Search"), is_enter_default = true, callback = function()
                 local q = dialog:getInputText()
                 UIManager:close(dialog)
                 if not q or q:match("^%s*$") then return end
                 self.last_query = q
                 local res = self:load(self.sp.search, q)
                 if res then
-                    self:listPage("„" .. q .. "”", res, "Nic nie znaleziono")
+                    self:listPage("“" .. q .. "”", res, T("Nothing found"))
                 end
             end },
         } },
@@ -876,5 +891,7 @@ function Browser:searchDialog()
 end
 
 SpotifyUI.pruneCache = prune_cache
+SpotifyUI.coverCached = cover_cached
+SpotifyUI.downloadCover = download_cover
 
 return SpotifyUI

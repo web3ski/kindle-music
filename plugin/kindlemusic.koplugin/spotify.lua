@@ -13,6 +13,7 @@ and the "json" module.
 local http = require("socket.http")
 local ltn12 = require("ltn12")
 local JSON = require("json")
+local T = require("l10n").T
 
 local TOKEN_URL = "https://accounts.spotify.com/api/token"
 local API = "https://api.spotify.com/v1"
@@ -192,6 +193,8 @@ function Spotify:player()
         artist = table.concat(artists, ", "),
         album = type(it.album) == "table" and it.album.name or (type(it.show) == "table" and it.show.name) or nil,
         track_id = it.type == "track" and it.id or nil,
+        image = type(it.album) == "table" and Spotify.pickImage(it.album.images, 300)
+            or (type(it.show) == "table" and Spotify.pickImage(it.show.images, 300)) or nil,
     }
 end
 
@@ -261,7 +264,7 @@ end
 function Spotify.normPlaylist(p)
     if type(p) ~= "table" or not p.uri then return nil end
     return { kind = "playlist", id = p.id, uri = p.uri, name = p.name,
-        sub = "Playlista" .. (type(p.owner) == "table" and (" · " .. (p.owner.display_name or p.owner.id or "")) or ""),
+        sub = T("Playlist") .. (type(p.owner) == "table" and (" · " .. (p.owner.display_name or p.owner.id or "")) or ""),
         owner_id = type(p.owner) == "table" and p.owner.id or nil,
         collaborative = p.collaborative == true,
         snapshot = p.snapshot_id,
@@ -280,7 +283,7 @@ end
 
 function Spotify.normArtist(a)
     if type(a) ~= "table" or not a.uri then return nil end
-    return { kind = "artist", id = a.id, uri = a.uri, name = a.name, sub = "Artysta", image = pick_image(a.images) }
+    return { kind = "artist", id = a.id, uri = a.uri, name = a.name, sub = T("Artist"), image = pick_image(a.images) }
 end
 
 function Spotify.normTrack(t, context_uri, offset, album_image)
@@ -370,7 +373,7 @@ function Spotify:recent()
             elseif kind == "playlist" or kind == "artist" then
                 -- context details need an extra request; show what we know, fetch name lazily
                 out[#out + 1] = { kind = kind, uri = key, id = key:match(":([%w]+)$"),
-                    name = nil, sub = kind == "playlist" and "Playlista" or "Artysta",
+                    name = nil, sub = kind == "playlist" and T("Playlist") or T("Artist"),
                     image = nil, lazy = true }
             end
         end
@@ -449,7 +452,7 @@ function Spotify:track(id)
     return Spotify.normTrack(d)
 end
 
---- "Mix artysty": the artist's tracks via search (recommendations are blocked for our app).
+--- "Artist mix": the artist's tracks via search (recommendations are blocked for our app).
 function Spotify:artistMix(artist_name, seed, artist_id)
     local out, seen = {}, {}
     if seed then out[1] = seed; seen[(seed.name or ""):lower()] = true end
@@ -522,17 +525,17 @@ function Spotify:search(q)
 end
 
 Spotify.ERRORS = {
-    not_linked = "Kindle nie jest połączony ze Spotify (uruchom tools/link_spotify.py na Macu)",
-    revoked = "Dostęp do Spotify wygasł lub został odwołany — połącz ponownie",
-    PREMIUM_REQUIRED = "Sterowanie odtwarzaniem wymaga Spotify Premium",
-    NO_ACTIVE_DEVICE = "Spotify nie widzi aktywnego głośnika",
-    UNKNOWN = "Spotify odmówił wykonania",
+    not_linked = "This Kindle is not linked to Spotify (run tools/link_spotify.py on your computer)",
+    revoked = "Spotify access expired or was revoked. Link the account again",
+    PREMIUM_REQUIRED = "Playback control requires Spotify Premium",
+    NO_ACTIVE_DEVICE = "Spotify can't see an active speaker",
+    UNKNOWN = "Spotify refused the request",
 }
 
 function Spotify.describeError(err)
     err = tostring(err)
-    if Spotify.ERRORS[err] then return Spotify.ERRORS[err] end
-    if err == "timeout" then return "Spotify nie odpowiada (timeout)" end
+    if Spotify.ERRORS[err] then return T(Spotify.ERRORS[err]) end
+    if err == "timeout" then return T("Spotify is not responding (timeout)") end
     return "Spotify: " .. err
 end
 
