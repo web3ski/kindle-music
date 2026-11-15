@@ -4,6 +4,7 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUT=${1:-"$ROOT/_site"}
+case "$OUT" in /*) ;; *) OUT="$(pwd)/$OUT" ;; esac
 ID=kindlemusic
 VERSION=$(python3 -c 'import json,sys; print(".".join(map(str, json.load(open(sys.argv[1]))["version"])))' "$ROOT/package/manifest.json")
 
