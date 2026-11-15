@@ -5,13 +5,13 @@
 On a Kindle jailbroken with [SpiderCat](https://kindlemodding.org/jailbreaking/SpiderCat/), type
 these lines into the home-screen search bar, one at a time:
 
-    ;kpm add-repo web3ski.github.io/kindle-music/r
+    ;kpm add-repo https://web3ski.github.io/kindle-music/r
     ;kpm update
     ;kpm install koreader
     ;kpm install kindlemusic
 
 Then tap **Kindle Music** in the library. Update later with `;kpm update` and then `;kpm upgrade`. The same steps are on
-https://web3ski.github.io/kindle-music/ (open it in the Kindle browser).
+https://web3ski.github.io/kindle-music/start (step by step, including the jailbreak).
 
 ## Manual install (USB / SSH)
 
