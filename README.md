@@ -24,7 +24,8 @@ Spotify Connect).
 - "Now playing" sleep screen: when the Kindle sleeps inside KOReader while music plays (or while
   the remote is open), the sleep screen shows the cover, title, artist, album and room instead of
   the usual KOReader screensaver. While music plays, the Kindle wakes up briefly (RTC alarm) when
-  the song should end, reads the new track, redraws the screen and goes back to sleep: at the
+  the song should end, leaves the screensaver state for ~15–20 s so Wi-Fi comes up (the picture
+  stays on screen, the front light stays off), reads the new track, redraws and goes back to sleep: at the
   latest every 10 minutes (every minute on the charger, every 5 minutes for internet radio).
   Nothing plays → no wakeups. Both settings can be turned off.
 - Translations: strings live in `plugin/kindlemusic.koplugin/l10n.lua` (English keys → translation).

@@ -48,10 +48,9 @@ local MAX_WAIT = 600
 local MAX_WAIT_CHARGING = 60
 local STREAM_WAIT = 300
 local MIN_WAIT = 20
-local NETWORK_WAIT = 90 -- seconds to wait for Wi-Fi after a scheduled wakeup
+local NETWORK_WAIT = 40 -- seconds to wait for Wi-Fi after a scheduled wakeup
 
--- Kindle: after an RTC wakeup powerd stays on the sleep screen and does not bring Wi-Fi back up
--- (seen in logs: still offline 15 s later), so we ask for it via lipc, like KOReader's own Wi-Fi toggle.
+-- Kindle: lipc helpers for Wi-Fi diagnostics, and to switch Wi-Fi on for a check when the user had it off.
 local function lipc_call(fn)
     local ok, lipc = pcall(require, "liblipclua")
     if not ok or not lipc then return nil end
@@ -86,30 +85,11 @@ local function cm_state()
     return lipc_call(function(h) return h:get_string_property("com.lab126.wifid", "cmState") end)
 end
 
---- wifid reports the interface as unavailable ("NA") on the sleep screen even when enabled:
--- switch it off and on so that it powers the radio up and reconnects to the known network.
-local function wifi_cycle()
-    local UIManager = require("ui/uimanager")
-    lipc_call(function(h) h:set_int_property("com.lab126.wifid", "enable", 0) end)
-    UIManager:scheduleIn(2, function()
-        lipc_call(function(h) h:set_int_property("com.lab126.wifid", "enable", 1) end)
-        -- a scan makes wifid connect to the known network (PENDING -> scanning -> CONNECTED)
-        UIManager:scheduleIn(2, function()
-            lipc_call(function(h) h:set_string_property("com.lab126.wifid", "scan", "") end)
-        end)
-    end)
-end
-
 local function wifi_off()
     lipc_call(function(h)
         h:set_int_property("com.lab126.wifid", "enable", 0)
         h:set_int_property("com.lab126.cmd", "wirelessEnable", 0)
     end)
-end
-
---- Ask powerd not to suspend for `s` seconds while we wait for Wi-Fi (ignored if unsupported).
-local function defer_suspend(s)
-    lipc_call(function(h) h:set_int_property("com.lab126.powerd", "deferSuspend", s) end)
 end
 
 --- "0:03:25" / "3:25" -> seconds (nil when unknown).
@@ -329,7 +309,7 @@ local function arm(wait)
     SleepScreen._token = token
     Device.wakeup_mgr:addTask(wait, SleepScreen._wake)
     UIManager:scheduleIn(wait + 2, function()
-        if SleepScreen._token ~= token or not Device.screen_saver_mode then return end
+        if SleepScreen._token ~= token or not Device.screen_saver_mode or SleepScreen._refreshing then return end
         logger.info("kindlemusic: sleep-screen update (not suspended yet)")
         Device.wakeup_mgr:removeTasks(nil, SleepScreen._wake)
         SleepScreen._wake()
@@ -362,53 +342,85 @@ local function repaint(np)
     return true
 end
 
+--- Keep the front light dark while we are briefly awake on the sleep screen (KOReader restores
+-- the light on resume; the user's own setting comes back when they really wake the Kindle).
+local function keep_light_off()
+    local UIManager = require("ui/uimanager")
+    for _, t in ipairs({ 0.3, 1, 2.5 }) do
+        UIManager:scheduleIn(t, function()
+            if SleepScreen._refreshing then pcall(function() Device.powerd:turnOffFrontlightHW() end) end
+        end)
+    end
+end
+
 --- Called by KOReader's WakeupMgr about 15 s after a scheduled wakeup (device still on the sleep screen).
+-- On the sleep screen powerd keeps the Wi-Fi radio off (cmState=NA, device tests), so when we are
+-- offline we leave the screensaver state like a power-button press, wait for Wi-Fi, redraw, and press
+-- "power" again. Screensaver:close() is suppressed meanwhile (see install), so the "now playing"
+-- picture stays on screen and KOReader goes straight back to sleep without drawing a new one.
 function SleepScreen._wake()
     local UIManager = require("ui/uimanager")
     local NetworkMgr = require("ui/network/manager")
+    local Screensaver = require("ui/screensaver")
     SleepScreen._token = nil
+    if SleepScreen._refreshing then return end
     local np = SleepScreen.now_playing
     if not np or not live_enabled() then return end
     logger.info("kindlemusic: updating the sleep screen")
     local started = os.time()
-    local kicked, wifi_was = false, nil
-    local cycled, last_log = 0, 0
+    local woke, kicked, wifi_was, last_log = false, false, nil, 0
+
+    local function online()
+        local ok, on = pcall(NetworkMgr.isConnected, NetworkMgr)
+        return ok and on
+    end
+
+    local function finish()
+        if kicked and wifi_was == 0 then wifi_off() end -- the user had Wi-Fi off: leave it off
+        SleepScreen._refreshing = false
+        if woke then
+            if Screensaver.screensaver_widget and Device.screen_saver_mode then
+                logger.info("kindlemusic: back to sleep after", os.time() - started, "s")
+                Device.powerd:toggleSuspend()
+            else
+                logger.info("kindlemusic: the user woke the Kindle meanwhile")
+            end
+        end
+    end
+
     local function attempt()
-        local Screensaver = require("ui/screensaver")
-        if not Screensaver.screensaver_widget then return end -- the user woke the Kindle meanwhile
-        local ok, online = pcall(NetworkMgr.isConnected, NetworkMgr)
-        if not (ok and online) then
-            if not kicked then
-                kicked = true
-                logger.info("kindlemusic: Wi-Fi down after wakeup:", wifi_state())
-                defer_suspend(NETWORK_WAIT + 30)
+        if not Screensaver.screensaver_widget then -- the user woke the Kindle meanwhile
+            SleepScreen._refreshing = false
+            return
+        end
+        if not online() then
+            local elapsed = os.time() - started
+            if not woke then
+                woke = true
+                SleepScreen._refreshing = true
+                logger.info("kindlemusic: offline on the sleep screen (", wifi_state(), "), waking up fully")
+                keep_light_off()
+                Device.powerd:toggleSuspend()
+            elseif not kicked and elapsed >= 6 then
+                kicked = true -- Wi-Fi switched off by the user: switch it on for this check
                 wifi_was = wifi_on()
             end
-            local elapsed = os.time() - started
-            local cm = cm_state()
             if elapsed - last_log >= 5 then
                 last_log = elapsed
-                logger.info("kindlemusic: waiting for Wi-Fi,", elapsed, "s, cmState =", tostring(cm))
-            end
-            -- still no interface: power-cycle wifid (after 8 s, then once more after 40 s)
-            if cm == "NA" and ((cycled == 0 and elapsed >= 8) or (cycled == 1 and elapsed >= 40)) then
-                cycled = cycled + 1
-                logger.info("kindlemusic: restarting Wi-Fi (attempt", cycled, ")")
-                wifi_cycle()
+                logger.info("kindlemusic: waiting for Wi-Fi,", elapsed, "s, cmState =", tostring(cm_state()))
             end
             if elapsed < NETWORK_WAIT then
                 UIManager:scheduleIn(1, attempt)
                 return
             end
-            logger.warn("kindlemusic: still no Wi-Fi after", os.time() - started, "s:", wifi_state())
-        elseif kicked then
+            logger.warn("kindlemusic: still no Wi-Fi after", elapsed, "s:", wifi_state())
+        elseif woke then
             logger.info("kindlemusic: Wi-Fi up after", os.time() - started, "s")
         end
         np.time = 0 -- force a fresh read
         timeouts = { 3, 8 }
         np = refresh(np)
         timeouts = { 1, 2 }
-        if kicked and wifi_was == 0 then wifi_off() end -- the user had Wi-Fi off: leave it off
         if np.time == 0 then
             -- no network / no answer: keep the old picture, try again later
             np.time = os.time()
@@ -416,13 +428,15 @@ function SleepScreen._wake()
             logger.warn("kindlemusic: sleep-screen update failed (offline?)", np.failures)
             unschedule()
             if np.failures < 3 then arm(is_charging() and MAX_WAIT_CHARGING or STREAM_WAIT) end
-            return
+        else
+            np.failures = 0
+            local okp, err = pcall(repaint, np)
+            if not okp then logger.warn("kindlemusic: sleep-screen repaint failed:", err) end
+            logger.info("kindlemusic: sleep screen now shows", np.state, np.title)
+            schedule(np) -- before going back to sleep: powerd arms the RTC alarm at ReadyToSuspend
         end
-        np.failures = 0
-        local okp, err = pcall(repaint, np)
-        if not okp then logger.warn("kindlemusic: sleep-screen repaint failed:", err) end
-        logger.info("kindlemusic: sleep screen now shows", np.state, np.title)
-        schedule(np)
+        -- give the e-ink refresh a moment before suspending
+        UIManager:scheduleIn(1.5, finish)
     end
     -- Next UI tick: WakeupMgr removes the task it just ran (queue position 1) after this callback
     -- returns, which would otherwise be the next alarm we add here.
@@ -436,6 +450,15 @@ function SleepScreen.install(plugin)
     if Screensaver._kindlemusic_orig_show then return end
     local orig_show = Screensaver.show
     Screensaver._kindlemusic_orig_show = orig_show
+    -- keep the sleep screen up while _wake() briefly leaves the screensaver state
+    local orig_close = Screensaver.close
+    Screensaver.close = function(ss, ...)
+        if SleepScreen._refreshing then
+            logger.info("kindlemusic: keeping the sleep screen during the update")
+            return
+        end
+        return orig_close(ss, ...)
+    end
     Screensaver.show = function(ss, ...)
         -- only for a normal sleep (not power-off / reboot screens) with a UI to return to
         if ss.ui and (ss.prefix == nil or ss.prefix == "") then
