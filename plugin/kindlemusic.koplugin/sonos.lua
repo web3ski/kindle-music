@@ -59,7 +59,7 @@ local function attrs(s)
 end
 
 --- Perform a SOAP call. Returns response body string, or nil + error.
-function Sonos.soap(ip, service, action, args)
+function Sonos.soap(ip, service, action, args, no_retry)
     local body_args = {}
     for _, kv in ipairs(args or {}) do
         body_args[#body_args + 1] = string.format("<%s>%s</%s>", kv[1], Sonos.escape(kv[2]), kv[1])
@@ -73,7 +73,7 @@ function Sonos.soap(ip, service, action, args)
         .. "</u:" .. action .. "></s:Body></s:Envelope>"
 
     local last_err
-    for _ = 1, 2 do -- one retry: speakers occasionally drop a connection
+    for _ = 1, no_retry and 1 or 2 do -- one retry: speakers occasionally drop a connection
         local chunks = {}
         local ok, code = http.request{
             url = "http://" .. ip .. ":1400" .. SERVICES[service],
@@ -550,9 +550,11 @@ end
 --- Hand the group over to another member (new_uuid). rejoin=false: the old
 -- coordinator leaves the group, so the music "moves" to the remaining rooms.
 function Sonos.delegateTo(coordinator_ip, new_uuid, rejoin)
+    -- the speaker answers only after the hand-over, which can take several seconds;
+    -- never resend it (a second request in the middle of the hand-over stops the music)
     return Sonos.soap(coordinator_ip, "AVTransport", "DelegateGroupCoordinationTo", {
         {"InstanceID", 0}, {"NewCoordinator", new_uuid}, {"RejoinGroup", rejoin and 1 or 0},
-    })
+    }, true)
 end
 
 --- Take a speaker out of its group (it becomes a standalone room).

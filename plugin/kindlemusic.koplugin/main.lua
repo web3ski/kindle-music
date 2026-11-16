@@ -74,6 +74,18 @@ local function guarded(fn, ...)
     return a, b
 end
 
+--- Like guarded(), but with long timeouts for regrouping commands that answer slowly.
+local function guarded_slow(fn, ...)
+    socketutil:set_timeout(5, 25)
+    local ok, a, b = pcall(fn, ...)
+    socketutil:reset_timeout()
+    if not ok then
+        logger.warn("Sonos: error", a)
+        return nil, tostring(a)
+    end
+    return a, b
+end
+
 local function toast(text)
     UIManager:show(InfoMessage:new{ text = text, timeout = 2 })
 end
@@ -914,6 +926,15 @@ function SonosRemote:waitTopology(ip, cond, timeout, cb)
     local function check()
         if self.closed then return end
         local groups = guarded(Sonos.getGroups, ip)
+        if groups then
+            local desc = {}
+            for _, g in ipairs(groups) do
+                local names = {}
+                for _, x in ipairs(g.members) do names[#names + 1] = x.name end
+                desc[#desc + 1] = table.concat(names, "+")
+            end
+            logger.info("KindleMusic: topology", table.concat(desc, " | "))
+        end
         if groups and cond(groups) then return cb(true) end
         if os.time() >= deadline then return cb(false) end
         UIManager:scheduleIn(0.6, check)
@@ -961,11 +982,14 @@ function SonosRemote:roomTapped(r)
             local ok, err
             if m.uuid == coord.uuid then
                 -- the leader leaves: hand the music to the next room first
-                ok, err = guarded(Sonos.delegateTo, coord.ip, others[1].uuid, false)
+                ok, err = guarded_slow(Sonos.delegateTo, coord.ip, others[1].uuid, false)
             else
-                ok, err = guarded(Sonos.leaveGroup, m.ip)
+                ok, err = guarded_slow(Sonos.leaveGroup, m.ip)
             end
-            if not ok then return self:regroupDone(others[1].ip, others[1].uuid, Sonos.describeError(err)) end
+            logger.info("KindleMusic: remove from group", m.name, ok and "ok" or tostring(err))
+            if not ok and tostring(err):match("^upnp:") then
+                return self:regroupDone(others[1].ip, others[1].uuid, Sonos.describeError(err))
+            end
             self:waitTopology(others[1].ip, function(gs)
                 local g = group_of(gs, m.uuid)
                 return g and #g.members == 1
@@ -978,7 +1002,7 @@ function SonosRemote:roomTapped(r)
             self:busy(T("Switching to %1…", m.name))
             -- everyone except this room and the leader leaves
             for _, x in ipairs(others) do
-                if x.uuid ~= coord.uuid then guarded(Sonos.leaveGroup, x.ip) end
+                if x.uuid ~= coord.uuid then guarded_slow(Sonos.leaveGroup, x.ip) end
             end
             if coord.uuid == m.uuid then
                 return self:waitTopology(m.ip, function(gs)
@@ -988,12 +1012,15 @@ function SonosRemote:roomTapped(r)
                     self:regroupDone(m.ip, m.uuid, not confirmed and not_confirmed or nil)
                 end)
             end
-            local ok, err = guarded(Sonos.delegateTo, coord.ip, m.uuid, false)
-            if not ok then return self:regroupDone(m.ip, coord.uuid, Sonos.describeError(err)) end
+            local ok, err = guarded_slow(Sonos.delegateTo, coord.ip, m.uuid, false)
+            logger.info("KindleMusic: play only here, delegate result", ok and "ok" or tostring(err))
+            if not ok and tostring(err):match("^upnp:") then
+                return self:regroupDone(m.ip, coord.uuid, Sonos.describeError(err))
+            end
             self:waitTopology(m.ip, function(gs)
                 local g = group_of(gs, m.uuid)
                 return g and g.coordinator == m.uuid and #g.members == 1
-            end, 8, function(confirmed)
+            end, 15, function(confirmed)
                 self:regroupDone(m.ip, m.uuid, not confirmed and not_confirmed or nil)
             end)
         end } }
@@ -1009,6 +1036,7 @@ function SonosRemote:roomTapped(r)
         local coord = group.members[1]
         local function join_then(after)
             local ok, err = self:joinRoom(coord, m)
+            logger.info("KindleMusic: join", m.name, "->", coord.name, ok and "ok" or tostring(err))
             if not ok then return self:regroupDone(coord.ip, coord.uuid, Sonos.describeError(err)) end
             self:waitTopology(coord.ip, function(gs)
                 local g = group_of(gs, m.uuid)
@@ -1024,18 +1052,22 @@ function SonosRemote:roomTapped(r)
             -- 1) other rooms of the old group leave, 2) the new room joins,
             -- 3) the old leader hands the music over to it and leaves.
             for _, x in ipairs(group.members) do
-                if x.uuid ~= coord.uuid then guarded(Sonos.leaveGroup, x.ip) end
+                if x.uuid ~= coord.uuid then guarded_slow(Sonos.leaveGroup, x.ip) end
             end
             join_then(function()
-                local ok, err = guarded(Sonos.delegateTo, coord.ip, m.uuid, false)
-                if not ok then
-                    -- keep both rooms playing rather than stopping the music
+                logger.info("KindleMusic: move music", coord.name, "->", m.name, ": delegating")
+                local ok, err = guarded_slow(Sonos.delegateTo, coord.ip, m.uuid, false)
+                logger.info("KindleMusic: delegate result", ok and "ok" or tostring(err))
+                if not ok and tostring(err):match("^upnp:") then
+                    -- refused: keep both rooms playing rather than stopping the music
                     return self:regroupDone(coord.ip, coord.uuid, Sonos.describeError(err))
                 end
+                -- ok, or no answer in time: the hand-over may still be going on, so watch the topology
                 self:waitTopology(m.ip, function(gs)
                     local g = group_of(gs, m.uuid)
                     return g and g.coordinator == m.uuid and #g.members == 1
-                end, 8, function(confirmed)
+                end, 15, function(confirmed)
+                    logger.info("KindleMusic: move confirmed", confirmed)
                     self:regroupDone(m.ip, m.uuid, not confirmed and not_confirmed or nil)
                 end)
             end)
@@ -1145,6 +1177,9 @@ local SonosPlugin = WidgetContainer:extend{
 }
 
 function SonosPlugin:init()
+    -- crash.log is block-buffered: write our lines out right away so logs taken
+    -- just after a problem contain it
+    pcall(function() io.stdout:setvbuf("line") end)
     local settings_dir = DataStorage:getSettingsDir()
     local settings_file = settings_dir .. "/kindlemusic.lua"
     -- one-time migration from the old plugin name (sonos.koplugin → settings/sonos.lua)
