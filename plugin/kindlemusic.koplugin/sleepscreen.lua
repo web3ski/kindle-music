@@ -48,7 +48,51 @@ local MAX_WAIT = 600
 local MAX_WAIT_CHARGING = 60
 local STREAM_WAIT = 300
 local MIN_WAIT = 20
-local NETWORK_WAIT = 15 -- seconds to wait for Wi-Fi after a scheduled wakeup
+local NETWORK_WAIT = 45 -- seconds to wait for Wi-Fi after a scheduled wakeup
+
+-- Kindle: after an RTC wakeup powerd stays on the sleep screen and does not bring Wi-Fi back up
+-- (seen in logs: still offline 15 s later), so we ask for it via lipc, like KOReader's own Wi-Fi toggle.
+local function lipc_call(fn)
+    local ok, lipc = pcall(require, "liblipclua")
+    if not ok or not lipc then return nil end
+    local h = lipc.init("com.github.koreader.kindlemusic")
+    if not h then return nil end
+    local ok2, a = pcall(fn, h)
+    h:close()
+    if ok2 then return a end
+end
+
+local function wifi_state()
+    return lipc_call(function(h)
+        return string.format("wirelessEnable=%s wifid.enable=%s cmState=%s powerd=%s",
+            tostring(h:get_int_property("com.lab126.cmd", "wirelessEnable")),
+            tostring(h:get_int_property("com.lab126.wifid", "enable")),
+            tostring(h:get_string_property("com.lab126.wifid", "cmState")),
+            tostring(h:get_string_property("com.lab126.powerd", "state")))
+    end) or "no lipc"
+end
+
+--- Turn Wi-Fi on; returns the previous wirelessEnable value (0 = the user had Wi-Fi off).
+local function wifi_on()
+    return lipc_call(function(h)
+        local was = h:get_int_property("com.lab126.cmd", "wirelessEnable")
+        h:set_int_property("com.lab126.cmd", "wirelessEnable", 1)
+        h:set_int_property("com.lab126.wifid", "enable", 1)
+        return was
+    end)
+end
+
+local function wifi_off()
+    lipc_call(function(h)
+        h:set_int_property("com.lab126.wifid", "enable", 0)
+        h:set_int_property("com.lab126.cmd", "wirelessEnable", 0)
+    end)
+end
+
+--- Ask powerd not to suspend for `s` seconds while we wait for Wi-Fi (ignored if unsupported).
+local function defer_suspend(s)
+    lipc_call(function(h) h:set_int_property("com.lab126.powerd", "deferSuspend", s) end)
+end
 
 --- "0:03:25" / "3:25" -> seconds (nil when unknown).
 function SleepScreen.seconds(s)
@@ -309,18 +353,31 @@ function SleepScreen._wake()
     if not np or not live_enabled() then return end
     logger.info("kindlemusic: updating the sleep screen")
     local started = os.time()
+    local kicked, wifi_was = false, nil
     local function attempt()
         local Screensaver = require("ui/screensaver")
         if not Screensaver.screensaver_widget then return end -- the user woke the Kindle meanwhile
         local ok, online = pcall(NetworkMgr.isConnected, NetworkMgr)
-        if not (ok and online) and os.time() - started < NETWORK_WAIT then
-            UIManager:scheduleIn(1, attempt)
-            return
+        if not (ok and online) then
+            if not kicked then
+                kicked = true
+                logger.info("kindlemusic: Wi-Fi down after wakeup:", wifi_state())
+                defer_suspend(NETWORK_WAIT + 30)
+                wifi_was = wifi_on()
+            end
+            if os.time() - started < NETWORK_WAIT then
+                UIManager:scheduleIn(1, attempt)
+                return
+            end
+            logger.warn("kindlemusic: still no Wi-Fi after", os.time() - started, "s:", wifi_state())
+        elseif kicked then
+            logger.info("kindlemusic: Wi-Fi up after", os.time() - started, "s")
         end
         np.time = 0 -- force a fresh read
         timeouts = { 3, 8 }
         np = refresh(np)
         timeouts = { 1, 2 }
+        if kicked and wifi_was == 0 then wifi_off() end -- the user had Wi-Fi off: leave it off
         if np.time == 0 then
             -- no network / no answer: keep the old picture, try again later
             np.time = os.time()
