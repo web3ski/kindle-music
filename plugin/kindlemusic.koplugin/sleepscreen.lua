@@ -48,7 +48,7 @@ local MAX_WAIT = 600
 local MAX_WAIT_CHARGING = 60
 local STREAM_WAIT = 300
 local MIN_WAIT = 20
-local NETWORK_WAIT = 45 -- seconds to wait for Wi-Fi after a scheduled wakeup
+local NETWORK_WAIT = 90 -- seconds to wait for Wi-Fi after a scheduled wakeup
 
 -- Kindle: after an RTC wakeup powerd stays on the sleep screen and does not bring Wi-Fi back up
 -- (seen in logs: still offline 15 s later), so we ask for it via lipc, like KOReader's own Wi-Fi toggle.
@@ -79,6 +79,24 @@ local function wifi_on()
         h:set_int_property("com.lab126.cmd", "wirelessEnable", 1)
         h:set_int_property("com.lab126.wifid", "enable", 1)
         return was
+    end)
+end
+
+local function cm_state()
+    return lipc_call(function(h) return h:get_string_property("com.lab126.wifid", "cmState") end)
+end
+
+--- wifid reports the interface as unavailable ("NA") on the sleep screen even when enabled:
+-- switch it off and on so that it powers the radio up and reconnects to the known network.
+local function wifi_cycle()
+    local UIManager = require("ui/uimanager")
+    lipc_call(function(h) h:set_int_property("com.lab126.wifid", "enable", 0) end)
+    UIManager:scheduleIn(2, function()
+        lipc_call(function(h) h:set_int_property("com.lab126.wifid", "enable", 1) end)
+        -- a scan makes wifid connect to the known network (PENDING -> scanning -> CONNECTED)
+        UIManager:scheduleIn(2, function()
+            lipc_call(function(h) h:set_string_property("com.lab126.wifid", "scan", "") end)
+        end)
     end)
 end
 
@@ -354,6 +372,7 @@ function SleepScreen._wake()
     logger.info("kindlemusic: updating the sleep screen")
     local started = os.time()
     local kicked, wifi_was = false, nil
+    local cycled, last_log = 0, 0
     local function attempt()
         local Screensaver = require("ui/screensaver")
         if not Screensaver.screensaver_widget then return end -- the user woke the Kindle meanwhile
@@ -365,7 +384,19 @@ function SleepScreen._wake()
                 defer_suspend(NETWORK_WAIT + 30)
                 wifi_was = wifi_on()
             end
-            if os.time() - started < NETWORK_WAIT then
+            local elapsed = os.time() - started
+            local cm = cm_state()
+            if elapsed - last_log >= 5 then
+                last_log = elapsed
+                logger.info("kindlemusic: waiting for Wi-Fi,", elapsed, "s, cmState =", tostring(cm))
+            end
+            -- still no interface: power-cycle wifid (after 8 s, then once more after 40 s)
+            if cm == "NA" and ((cycled == 0 and elapsed >= 8) or (cycled == 1 and elapsed >= 40)) then
+                cycled = cycled + 1
+                logger.info("kindlemusic: restarting Wi-Fi (attempt", cycled, ")")
+                wifi_cycle()
+            end
+            if elapsed < NETWORK_WAIT then
                 UIManager:scheduleIn(1, attempt)
                 return
             end
