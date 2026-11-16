@@ -625,9 +625,10 @@ end
 function SonosRemote:showSpotify()
     if not self:currentGroup() then return end
     if not self.plugin:spotify() then
-        UIManager:show(InfoMessage:new{
-            text = T("This Kindle is not linked to Spotify.\n\nOn your computer run:\n"
-                .. "python3 tools/link_spotify.py <Kindle IP>\nand sign in with your Spotify account."),
+        UIManager:show(ConfirmBox:new{
+            text = T("This Kindle is not linked to Spotify yet. Link an account now with your phone?"),
+            ok_text = T("Link"),
+            ok_callback = function() self.plugin:addSpotifyAccount() end,
         })
         return
     end
@@ -1573,6 +1574,17 @@ function SonosPlugin:playSpotify(group, item, track_list, index, connect_device)
     return nil, err
 end
 
+--- Link a Spotify account from a phone (QR code), then make it the active one.
+function SonosPlugin:addSpotifyAccount()
+    require("spotifylink").show(self, function(id, name)
+        self:loadSpotifyAccounts()
+        self:setActiveSpotify(id)
+        UIManager:show(InfoMessage:new{
+            text = T("Spotify linked: %1\n\nFor playback through Sonos, add this Spotify account in the Sonos app too.", name),
+        })
+    end)
+end
+
 --- Pick the active Spotify account / remove one / how to add one.
 function SonosPlugin:showSpotifyAccounts()
     local ButtonDialog = require("ui/widget/buttondialog")
@@ -1597,15 +1609,9 @@ function SonosPlugin:showSpotifyAccounts()
             end },
         })
     end
-    table.insert(buttons, { { text = T("+ Add account…"), callback = function()
+    table.insert(buttons, { { text = T("+ Add account with your phone…"), callback = function()
         UIManager:close(dialog)
-        UIManager:show(InfoMessage:new{
-            text = T("To add a Spotify account to this Kindle, run on your computer:\n\n"
-                .. "python3 tools/link_spotify.py <Kindle IP>\n\n"
-                .. "and sign in with that account. The account must be added in the Spotify dashboard "
-                .. "(User Management, max. 5 people), and for playback through Sonos also in the Sonos app.\n"
-                .. "Then restart KOReader."),
-        })
+        self:addSpotifyAccount()
     end } })
     dialog = ButtonDialog:new{
         title = #buttons > 1 and T("Spotify accounts on this Kindle") or T("No linked Spotify accounts"),

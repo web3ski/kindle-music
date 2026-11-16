@@ -60,6 +60,48 @@ local function raw_request(method, url, headers, body)
     return tonumber(code), table.concat(chunks), resp_headers
 end
 
+-- Permissions requested when linking an account (keep in sync with tools/link_spotify.py).
+Spotify.SCOPES = table.concat({
+    "playlist-read-private", "playlist-read-collaborative", "user-library-read", "user-library-modify",
+    "user-read-playback-state", "user-modify-playback-state", "user-read-currently-playing",
+    "user-read-private", "user-top-read", "user-read-recently-played", "user-follow-read",
+}, " ")
+
+Spotify.urlencode = urlencode
+Spotify.form = form
+
+--- PKCE step 2: trade the authorization code for tokens. Returns the token table or nil, err.
+function Spotify.exchangeCode(client_id, code, verifier, redirect_uri)
+    local body = form{
+        grant_type = "authorization_code",
+        code = code,
+        redirect_uri = redirect_uri,
+        client_id = client_id,
+        code_verifier = verifier,
+    }
+    local status, resp = raw_request("POST", TOKEN_URL, {
+        ["Content-Type"] = "application/x-www-form-urlencoded",
+        ["Content-Length"] = tostring(#body),
+    }, body)
+    if not status then return nil, resp end
+    local ok, data = pcall(JSON.decode, resp or "")
+    if status ~= 200 or not ok or type(data) ~= "table" or not data.refresh_token then
+        local err = ok and type(data) == "table" and (data.error_description or data.error) or ("http " .. tostring(status))
+        logger.warn("Spotify: code exchange failed", status, resp)
+        return nil, err
+    end
+    return data
+end
+
+--- The profile (/me) for an access token.
+function Spotify.profile(access_token)
+    local status, resp = raw_request("GET", API .. "/me", { ["Authorization"] = "Bearer " .. access_token })
+    if not status then return nil, resp end
+    local ok, data = pcall(JSON.decode, resp or "")
+    if status ~= 200 or not ok or type(data) ~= "table" then return nil, "http " .. tostring(status) end
+    return data
+end
+
 function Spotify:refresh()
     if not self.client_id or not self.refresh_token then
         return nil, "not_linked"
@@ -568,12 +610,12 @@ function Spotify:search(q)
 end
 
 Spotify.ERRORS = {
-    not_linked = "This Kindle is not linked to Spotify (run tools/link_spotify.py on your computer)",
+    not_linked = "This Kindle is not linked to Spotify (Settings → Account → Add account)",
     revoked = "Spotify access expired or was revoked. Link the account again",
     PREMIUM_REQUIRED = "Playback control requires Spotify Premium",
     NO_ACTIVE_DEVICE = "Spotify can't see an active speaker",
     UNKNOWN = "Spotify refused the request",
-    missing_scope = "Spotify needs a new permission. Run tools/link_spotify.py on your computer again",
+    missing_scope = "Spotify needs a new permission. Link the account again (Settings → Account → Add account)",
 }
 
 function Spotify.describeError(err)

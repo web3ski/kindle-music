@@ -441,7 +441,7 @@ function Browser:load(fn, ...)
     UIManager:close(msg)
     if not res then
         if tostring(err):match("[Ss]cope") then
-            toast(T("This section needs Spotify to be linked again (new permissions).\nRun tools/link_spotify.py on your computer."))
+            toast(T("This section needs Spotify to be linked again (new permissions).\nSettings → Account → Add account."))
         else
             toast(Spotify.describeError(err))
         end

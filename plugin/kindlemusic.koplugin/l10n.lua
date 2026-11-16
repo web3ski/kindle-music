@@ -132,7 +132,7 @@ local pl = {
     ["Liked"] = "Polubione",
     ["Added to Liked Songs"] = "Dodano do polubionych",
     ["Removed from Liked Songs"] = "Usunięto z polubionych",
-    ["Spotify needs a new permission. Run tools/link_spotify.py on your computer again"] = "Spotify potrzebuje nowego uprawnienia. Uruchom ponownie tools/link_spotify.py na komputerze",
+    ["Spotify needs a new permission. Link the account again (Settings → Account → Add account)"] = "Spotify potrzebuje nowego uprawnienia. Połącz konto ponownie (Ustawienia → Konto → Dodaj konto)",
     ["Sleep screen: wake up to show the next song"] = "Ekran uśpienia: budź się na kolejny utwór",
     ["Account: %1"] = "Konto: %1",
     ["none"] = "brak",
@@ -155,8 +155,8 @@ local pl = {
     -- Spotify browser
     ["Empty"] = "Pusto",
     ["‹ Back"] = "‹ Wstecz",
-    ["This section needs Spotify to be linked again (new permissions).\nRun tools/link_spotify.py on your computer."] =
-        "Ta sekcja wymaga ponownego połączenia ze Spotify (nowe uprawnienia).\nUruchom tools/link_spotify.py na komputerze.",
+    ["This section needs Spotify to be linked again (new permissions).\nSettings → Account → Add account."] =
+        "Ta sekcja wymaga ponownego połączenia ze Spotify (nowe uprawnienia).\nUstawienia → Konto → Dodaj konto.",
     ["▶ Play"] = "▶ Odtwórz",
     ["Radio from this song"] = "Radio z tego utworu",
     ["Artist mix: %1"] = "Mix artysty: %1",
@@ -220,8 +220,37 @@ local pl = {
     ["Sonos error %1"] = "Błąd Sonos %1",
     ["Speaker is not responding (timeout)"] = "Głośnik nie odpowiada (timeout)",
     ["Network error: %1"] = "Błąd sieci: %1",
-    ["This Kindle is not linked to Spotify (run tools/link_spotify.py on your computer)"] =
-        "Kindle nie jest połączony ze Spotify (uruchom tools/link_spotify.py na komputerze)",
+    ["This Kindle is not linked to Spotify (Settings → Account → Add account)"] =
+        "Kindle nie jest połączony ze Spotify (Ustawienia → Konto → Dodaj konto)",
+    ["+ Add account with your phone…"] = "+ Dodaj konto telefonem…",
+    ["Spotify linked: %1\n\nFor playback through Sonos, add this Spotify account in the Sonos app too."] =
+        "Połączono Spotify: %1\n\nŻeby grać przez Sonos, dodaj to konto Spotify także w aplikacji Sonos.",
+    ["This Kindle is not linked to Spotify yet. Link an account now with your phone?"] =
+        "Ten Kindle nie jest jeszcze połączony ze Spotify. Połączyć konto teraz telefonem?",
+    ["Link"] = "Połącz",
+    ["Note: without Spotify Premium, playback control through Spotify Connect will not work."] =
+        "Uwaga: bez Spotify Premium sterowanie przez Spotify Connect nie będzie działać.",
+    ["Add a Spotify account"] = "Dodaj konto Spotify",
+    ["1. Connect your phone to the same Wi-Fi as this Kindle.\n2. Scan the code with the phone's camera.\n3. Paste the Client ID of your Spotify app and sign in."] =
+        "1. Połącz telefon z tą samą siecią Wi-Fi co Kindle.\n2. Zeskanuj kod aparatem telefonu.\n3. Wklej Client ID swojej aplikacji Spotify i zaloguj się.",
+    ["Connect the Kindle to Wi-Fi first."] = "Najpierw połącz Kindle z Wi-Fi.",
+    ["Could not open the link page on this Kindle: %1"] = "Nie udało się uruchomić strony łączenia na Kindlu: %1",
+    ["Scan the QR code on the Kindle again."] = "Zeskanuj ponownie kod QR z Kindla.",
+    ["Link Spotify to your Kindle"] = "Połącz Spotify z Kindlem",
+    ["You need the Client ID of your Spotify app (developer.spotify.com → Dashboard → your app → Settings). In that app, the Redirect URI must be:"] =
+        "Potrzebny jest Client ID Twojej aplikacji Spotify (developer.spotify.com → Dashboard → Twoja aplikacja → Settings). W tej aplikacji Redirect URI musi być:",
+    ["Sign in with Spotify"] = "Zaloguj się przez Spotify",
+    ["Each person who uses the app must be added in the Spotify dashboard under User Management (up to 5 people)."] =
+        "Każdą osobę, która korzysta z aplikacji, trzeba dodać w panelu Spotify w User Management (maks. 5 osób).",
+    ["That doesn't look like a Client ID (32 letters and digits)."] = "To nie wygląda na Client ID (32 litery i cyfry).",
+    ["Spotify was not linked"] = "Nie połączono Spotify",
+    ["Try again"] = "Spróbuj ponownie",
+    ["Spotify said: %1"] = "Odpowiedź Spotify: %1",
+    ["This sign-in does not belong to this Kindle. Start again from the QR code."] = "To logowanie nie pasuje do tego Kindla. Zacznij od nowa od kodu QR.",
+    ["Spotify refused the sign-in (%1). Check that the Redirect URI in your Spotify app is exactly %2"] =
+        "Spotify odrzucił logowanie (%1). Sprawdź, czy Redirect URI w Twojej aplikacji Spotify to dokładnie %2",
+    ["Linked: %1"] = "Połączono: %1",
+    ["You can close this page. The Kindle is ready."] = "Możesz zamknąć tę stronę. Kindle jest gotowy.",
     ["Spotify access expired or was revoked. Link the account again"] =
         "Dostęp do Spotify wygasł lub został odwołany — połącz ponownie",
     ["Playback control requires Spotify Premium"] = "Sterowanie odtwarzaniem wymaga Spotify Premium",

@@ -8,6 +8,7 @@
   body { font-family: serif; font-size: 20px; line-height: 1.45; margin: 16px; max-width: 760px; color: #000; background: #fff; }
   h1 { font-size: 30px; margin: 0 0 8px; }
   h2 { font-size: 24px; margin: 30px 0 8px; border-bottom: 2px solid #000; }
+  h3 { font-size: 21px; margin: 20px 0 6px; }
   ol { padding-left: 26px; }
   li { margin: 6px 0; }
   code { font-family: monospace; font-size: 19px; background: #eee; padding: 2px 4px; word-break: break-all; }
@@ -82,9 +83,40 @@ Replace <code>KINDLE_IP</code> with your Kindle's IP address.</p>
 <div class="cmd"><span class="t">ssh root@KINDLE_IP '/var/local/kmc/bin/kpm add-repo https://web3ski.github.io/kindle-music/r &amp;&amp; /var/local/kmc/bin/kpm update &amp;&amp; /var/local/kmc/bin/kpm -y install kindlemusic'</span><button type="button">Copy</button></div>
 <p><small>After that, <code>;kpm update</code> and <code>;kpm upgrade</code> in the search bar keep it up to date.</small></p>
 
-<h2>Spotify (optional)</h2>
-<p>Needs Spotify Premium and your own free Spotify developer app. See
-<a href="https://github.com/web3ski/kindle-music/blob/main/docs/INSTALL.md">docs/INSTALL.md</a>.</p>
+<h2 id="spotify">Spotify (optional)</h2>
+<p>Lets you browse your playlists, search, start radio and like songs from the Kindle.
+You need <b>Spotify Premium</b>. Spotify only gives small projects access through your own
+free "developer app", so one person in the household creates it once (about 5 minutes, on a phone or computer).</p>
+
+<h3>A. Create your Spotify app (once per household)</h3>
+<ol>
+  <li>Open <a href="https://developer.spotify.com/dashboard">developer.spotify.com/dashboard</a> and log in with your Spotify account. Accept the terms if asked.</li>
+  <li>Tap <b>Create app</b>. Name: anything, for example <i>Kindle Music</i>. Description: anything.</li>
+  <li>In <b>Redirect URIs</b> paste exactly this address and tap <b>Add</b>:</li>
+</ol>
+<div class="cmd"><span class="t">https://web3ski.github.io/kindle-music/callback/</span><button type="button">Copy</button></div>
+<ol start="4">
+  <li>Under <b>Which API/SDKs are you planning to use?</b> tick <b>Web API</b>, accept the terms and tap <b>Save</b>.</li>
+  <li>Open the app's <b>Settings</b>. You will need the <b>Client ID</b> (32 letters and digits) in part B.</li>
+  <li>Other people in the household: in the app's <b>User Management</b>, add their name and the e-mail of their Spotify account (up to 5 people).</li>
+</ol>
+
+<h3>B. Link a Spotify account to the Kindle</h3>
+<ol>
+  <li>On the Kindle open Kindle Music → <b>Settings</b> → <b>Account</b> → <b>+ Add account with your phone</b>. A QR code appears.</li>
+  <li>Make sure your phone is on the <b>same Wi-Fi</b> as the Kindle, then scan the code with the phone's camera.</li>
+  <li>On the page that opens, paste the <b>Client ID</b> (only the first time) and tap <b>Sign in with Spotify</b>.</li>
+  <li>Log in with the Spotify account that should be used on this Kindle and tap <b>Agree</b>.</li>
+  <li>The phone shows <b>Linked</b> and the Kindle shows the account name. Done.</li>
+</ol>
+<p><small>To play Spotify through Sonos speakers, the same Spotify account must also be added in the Sonos app
+(Settings → Services &amp; Voice → Add a service → Spotify). Several accounts can be linked; pick the active one under Settings → Account.
+Linked before version 0.2? Link the account again once, so the Like button gets its new permission.</small></p>
+<ul>
+  <li><b>"INVALID_CLIENT: Invalid redirect URI":</b> the Redirect URI in your Spotify app is not exactly the address above (check the slash at the end).</li>
+  <li><b>The phone can't open the Kindle page:</b> the phone must be on the same Wi-Fi as the Kindle (not mobile data, not a guest network).</li>
+  <li><b>"User not registered in the Developer Dashboard":</b> add that person in the app's User Management.</li>
+</ul>
 
 <p><small>Source code: <a href="https://github.com/web3ski/kindle-music">github.com/web3ski/kindle-music</a> · AGPL-3.0</small></p>
 
