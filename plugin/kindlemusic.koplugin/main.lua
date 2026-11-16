@@ -882,12 +882,55 @@ function SonosRemote:afterRegroup(seed_ip, focus_uuid)
         self:refresh(true)
     end
     reload()
-    UIManager:scheduleIn(1.5, reload)
-    UIManager:scheduleIn(4, reload)
+    UIManager:scheduleIn(3, reload)
+end
+
+--- Busy message while speakers are regrouped (taps on rooms are ignored meanwhile).
+function SonosRemote:busy(text)
+    self:unbusy()
+    self._busy = InfoMessage:new{ text = text, dismissable = false }
+    UIManager:show(self._busy)
+    UIManager:forceRePaint()
+end
+
+function SonosRemote:unbusy()
+    if self._busy then
+        UIManager:close(self._busy)
+        self._busy = nil
+    end
+end
+
+local function group_of(groups, uuid)
+    for _, g in ipairs(groups or {}) do
+        for _, x in ipairs(g.members) do
+            if x.uuid == uuid then return g end
+        end
+    end
+end
+
+--- Poll the Sonos topology (via ip) until cond(groups) is true or `timeout` seconds pass.
+function SonosRemote:waitTopology(ip, cond, timeout, cb)
+    local deadline = os.time() + timeout
+    local function check()
+        if self.closed then return end
+        local groups = guarded(Sonos.getGroups, ip)
+        if groups and cond(groups) then return cb(true) end
+        if os.time() >= deadline then return cb(false) end
+        UIManager:scheduleIn(0.6, check)
+    end
+    UIManager:scheduleIn(0.5, check)
+end
+
+--- Finish a regroup: close the busy message, reload topology and focus on `uuid`.
+function SonosRemote:regroupDone(ip, uuid, failed_text)
+    self:unbusy()
+    if failed_text then toast(failed_text) end
+    self:afterRegroup(ip, uuid)
 end
 
 --- Tap on a room: play there, add it to the group, or take it out of the group.
 function SonosRemote:roomTapped(r)
+    if self._busy then return end
     local m = r.member
     if self.connect then
         return self:selectGroup(r.group)
@@ -901,32 +944,58 @@ function SonosRemote:roomTapped(r)
     for _, x in ipairs(group and group.members or {}) do
         if x.uuid == m.uuid then in_group = true end
     end
+    local not_confirmed = T("The speakers did not confirm the change. Check the Sonos app.")
     if in_group then
         if #group.members < 2 then
             toast(T("Music is playing here"))
             return
         end
+        local coord = group.members[1]
         local others = {}
         for _, x in ipairs(group.members) do
             if x.uuid ~= m.uuid then others[#others + 1] = x end
         end
         rows[#rows + 1] = { { text = T("Remove from group"), callback = function()
             close()
-            local ok, err = guarded(Sonos.leaveGroup, m.ip)
-            if not ok then toast(Sonos.describeError(err)) end
-            self:afterRegroup(others[1].ip, others[1].uuid)
+            self:busy(T("Removing %1 from the group…", m.name))
+            local ok, err
+            if m.uuid == coord.uuid then
+                -- the leader leaves: hand the music to the next room first
+                ok, err = guarded(Sonos.delegateTo, coord.ip, others[1].uuid, false)
+            else
+                ok, err = guarded(Sonos.leaveGroup, m.ip)
+            end
+            if not ok then return self:regroupDone(others[1].ip, others[1].uuid, Sonos.describeError(err)) end
+            self:waitTopology(others[1].ip, function(gs)
+                local g = group_of(gs, m.uuid)
+                return g and #g.members == 1
+            end, 8, function(confirmed)
+                self:regroupDone(others[1].ip, others[1].uuid, not confirmed and not_confirmed or nil)
+            end)
         end } }
         rows[#rows + 1] = { { text = T("Play only here"), callback = function()
             close()
-            local coord = group.members[1]
-            if coord.uuid ~= m.uuid then
-                -- hand the music to this room, the old leader leaves
-                if not guarded(Sonos.delegateTo, coord.ip, m.uuid, false) then guarded(Sonos.leaveGroup, coord.ip) end
-            end
+            self:busy(T("Switching to %1…", m.name))
+            -- everyone except this room and the leader leaves
             for _, x in ipairs(others) do
                 if x.uuid ~= coord.uuid then guarded(Sonos.leaveGroup, x.ip) end
             end
-            self:afterRegroup(m.ip, m.uuid)
+            if coord.uuid == m.uuid then
+                return self:waitTopology(m.ip, function(gs)
+                    local g = group_of(gs, m.uuid)
+                    return g and #g.members == 1
+                end, 8, function(confirmed)
+                    self:regroupDone(m.ip, m.uuid, not confirmed and not_confirmed or nil)
+                end)
+            end
+            local ok, err = guarded(Sonos.delegateTo, coord.ip, m.uuid, false)
+            if not ok then return self:regroupDone(m.ip, coord.uuid, Sonos.describeError(err)) end
+            self:waitTopology(m.ip, function(gs)
+                local g = group_of(gs, m.uuid)
+                return g and g.coordinator == m.uuid and #g.members == 1
+            end, 8, function(confirmed)
+                self:regroupDone(m.ip, m.uuid, not confirmed and not_confirmed or nil)
+            end)
         end } }
         rows[#rows + 1] = { { text = T("Volume of each room…"), callback = function()
             close()
@@ -938,21 +1007,43 @@ function SonosRemote:roomTapped(r)
             return self:selectGroup(r.group)
         end
         local coord = group.members[1]
+        local function join_then(after)
+            local ok, err = self:joinRoom(coord, m)
+            if not ok then return self:regroupDone(coord.ip, coord.uuid, Sonos.describeError(err)) end
+            self:waitTopology(coord.ip, function(gs)
+                local g = group_of(gs, m.uuid)
+                return g and g.coordinator == coord.uuid
+            end, 8, function(confirmed)
+                if not confirmed then return self:regroupDone(coord.ip, coord.uuid, not_confirmed) end
+                after()
+            end)
+        end
         rows[#rows + 1] = { { text = T("Play here instead (move the music)"), callback = function()
             close()
-            local ok, err = self:joinRoom(coord, m)
-            if not ok then toast(Sonos.describeError(err)) return end
-            if not guarded(Sonos.delegateTo, coord.ip, m.uuid, false) then guarded(Sonos.leaveGroup, coord.ip) end
+            self:busy(T("Moving the music to %1…", m.name))
+            -- 1) other rooms of the old group leave, 2) the new room joins,
+            -- 3) the old leader hands the music over to it and leaves.
             for _, x in ipairs(group.members) do
                 if x.uuid ~= coord.uuid then guarded(Sonos.leaveGroup, x.ip) end
             end
-            self:afterRegroup(m.ip, m.uuid)
+            join_then(function()
+                local ok, err = guarded(Sonos.delegateTo, coord.ip, m.uuid, false)
+                if not ok then
+                    -- keep both rooms playing rather than stopping the music
+                    return self:regroupDone(coord.ip, coord.uuid, Sonos.describeError(err))
+                end
+                self:waitTopology(m.ip, function(gs)
+                    local g = group_of(gs, m.uuid)
+                    return g and g.coordinator == m.uuid and #g.members == 1
+                end, 8, function(confirmed)
+                    self:regroupDone(m.ip, m.uuid, not confirmed and not_confirmed or nil)
+                end)
+            end)
         end } }
         rows[#rows + 1] = { { text = T("Add to group (play together)"), callback = function()
             close()
-            local ok, err = self:joinRoom(coord, m)
-            if not ok then toast(Sonos.describeError(err)) end
-            self:afterRegroup(coord.ip, coord.uuid)
+            self:busy(T("Adding %1 to the group…", m.name))
+            join_then(function() self:regroupDone(coord.ip, coord.uuid) end)
         end } }
         rows[#rows + 1] = { { text = T("Control this room"), callback = function()
             close()
