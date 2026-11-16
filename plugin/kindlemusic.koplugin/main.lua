@@ -258,6 +258,11 @@ function SonosRemote:build()
                                 name = T("Radio: %1", self.track.title or "") })
                         end })
                 end
+                if self.track and self.track.spotify_id and self.plugin:spotify() then
+                    local liked = self.liked and self.liked[self.track.spotify_id]
+                    table.insert(row, { text = liked and T("Liked") or T("Like"), font_size = big - 4,
+                        height = btn_h, callback = function() self:toggleLike() end })
+                end
                 if #row < 3 then
                     table.insert(row, { text = T("Sonos favorites"), font_size = big - 6, height = btn_h,
                         callback = function() self:showLibrary() end })
@@ -322,6 +327,7 @@ function SonosRemote:fetch()
         self.state = state
         self.track = guarded(Sonos.getTrack, group.ip) or {}
         self.track.spotify_id = self.track.uri and self.track.uri:match("spotify%%3atrack%%3a(%w+)") or nil
+        self:checkLiked()
         self.volume = guarded(Sonos.getVolume, group) or self.volume
         self.mode = guarded(Sonos.getPlayMode, group.ip) or self.mode
         local rem = guarded(Sonos.getSleepTimer, group.ip)
@@ -345,6 +351,7 @@ function SonosRemote:fetchConnect()
         self.error = nil
         self.state = st.is_playing and "PLAYING" or "PAUSED_PLAYBACK"
         self.track = { title = st.title, artist = st.artist, album = st.album, spotify_id = st.track_id, art = st.image }
+        self:checkLiked()
         self.volume = st.volume
         self.mode = { shuffle = st.shuffle, rep = st.rep }
         SleepScreen.update{ title = st.title, artist = st.artist, album = st.album, art = st.image,
@@ -457,6 +464,32 @@ function SonosRemote:rediscover()
     self.plugin:discover(true)
     self.groups = self.plugin:visibleGroups()
     self:refresh(true)
+end
+
+--- Check once per track whether it is already in Liked Songs.
+function SonosRemote:checkLiked()
+    local id = self.track and self.track.spotify_id
+    self.liked = self.liked or {}
+    if not id or self.liked[id] ~= nil or self.like_checked == id then return end
+    self.like_checked = id
+    local sp = self.plugin:spotify()
+    if not sp then return end
+    local saved = guarded(sp.isSaved, sp, id)
+    if saved ~= nil then self.liked[id] = saved end
+end
+
+--- Add the current track to Spotify Liked Songs (or remove it if it is already there).
+function SonosRemote:toggleLike()
+    local id = self.track and self.track.spotify_id
+    local sp = self.plugin:spotify()
+    if not id or not sp then return end
+    self.liked = self.liked or {}
+    local save = not self.liked[id]
+    local ok, err = guarded(sp.saveTrack, sp, id, save)
+    if not ok then toast(Spotify.describeError(err)) return end
+    self.liked[id] = save
+    toast(save and T("Added to Liked Songs") or T("Removed from Liked Songs"))
+    self:redraw()
 end
 
 function SonosRemote:command(name)

@@ -20,6 +20,9 @@ Spotify Connect).
 - Local Sonos control over UPnP (no cloud): play/pause/skip, volume, groups/rooms,
   shuffle/repeat, sleep timer; auto-discovery and per-household profiles.
 - Spotify: browse library/playlists, search, radio, play on Sonos or any Spotify Connect device.
+- "Like" button: add the current track to (or remove it from) Spotify Liked Songs. Needs the
+  `user-library-modify` permission; if you linked Spotify before this version, run
+  `tools/link_spotify.py` again.
 - Small album-art thumbnail next to the track title on the remote.
 - "Now playing" sleep screen: when the Kindle sleeps inside KOReader while music plays (or while
   the remote is open), the sleep screen shows the cover, title, artist, album and room instead of

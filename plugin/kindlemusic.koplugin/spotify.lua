@@ -454,6 +454,37 @@ function Spotify:track(id)
     return Spotify.normTrack(d)
 end
 
+-- Older apps use /me/tracks; newer development-mode apps only get /me/library.
+local function library_fallback(code)
+    return code == 404 or code == 410 or code == 400
+end
+
+local function scope_error(err, code)
+    if code == 403 and tostring(err):lower():find("scope") then return "missing_scope" end
+    return err
+end
+
+--- Is the track in the user's Liked Songs? Returns true/false, or nil, err.
+function Spotify:isSaved(id)
+    local d, e, code = self:api("GET", "/me/tracks/contains", { ids = id })
+    if not d and library_fallback(code) then
+        d, e, code = self:api("GET", "/me/library/contains", { uris = "spotify:track:" .. id })
+    end
+    if type(d) ~= "table" then return nil, scope_error(e, code) end
+    return d[1] == true
+end
+
+--- Add (save = true) or remove (save = false) a track from Liked Songs.
+function Spotify:saveTrack(id, save)
+    local method = save == false and "DELETE" or "PUT"
+    local d, e, code = self:api(method, "/me/tracks", { ids = id })
+    if not d and library_fallback(code) then
+        d, e, code = self:api(method, "/me/library", { uris = "spotify:track:" .. id })
+    end
+    if not d then return nil, scope_error(e, code) end
+    return true
+end
+
 --- "Artist mix": the artist's tracks via search (recommendations are blocked for our app).
 function Spotify:artistMix(artist_name, seed, artist_id)
     local out, seen = {}, {}
@@ -532,6 +563,7 @@ Spotify.ERRORS = {
     PREMIUM_REQUIRED = "Playback control requires Spotify Premium",
     NO_ACTIVE_DEVICE = "Spotify can't see an active speaker",
     UNKNOWN = "Spotify refused the request",
+    missing_scope = "Spotify needs a new permission. Run tools/link_spotify.py on your computer again",
 }
 
 function Spotify.describeError(err)
