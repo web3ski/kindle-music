@@ -327,7 +327,8 @@ function SonosRemote:fetch()
         local rem = guarded(Sonos.getSleepTimer, group.ip)
         self.sleep_label = (rem and rem ~= "") and rem:match("^(%d+:%d+)") or nil
         SleepScreen.update{ title = self.track.title, artist = self.track.artist, album = self.track.album,
-            art = self.track.art, state = state, room = group.name, ip = group.ip }
+            art = self.track.art, state = state, room = group.name, ip = group.ip,
+            duration = SleepScreen.seconds(self.track.duration), position = SleepScreen.seconds(self.track.position) }
     end
     self:loadArt()
     local new_snapshot = table.concat({ tostring(self.state), tostring(self.track.title),
@@ -347,7 +348,8 @@ function SonosRemote:fetchConnect()
         self.volume = st.volume
         self.mode = { shuffle = st.shuffle, rep = st.rep }
         SleepScreen.update{ title = st.title, artist = st.artist, album = st.album, art = st.image,
-            state = self.state, room = self.connect.name, connect_id = self.connect.id }
+            state = self.state, room = self.connect.name, connect_id = self.connect.id,
+            duration = st.duration, position = st.progress }
     elseif st or err == "none" then
         self.error = nil
         self.state = "STOPPED"
@@ -1327,6 +1329,14 @@ function SonosPlugin:showSettings(on_change)
             reopen()
         end },
     })
+    if not self.settings:isFalse("sleep_screen") then
+        table.insert(rows, { { text = (self.settings:isFalse("sleep_screen_live") and "☐ " or "☑ ")
+            .. T("Sleep screen: wake up to show the next song"), callback = function()
+            self.settings:saveSetting("sleep_screen_live", self.settings:isFalse("sleep_screen_live"))
+            self.settings:flush()
+            reopen()
+        end } })
+    end
     table.insert(rows, { { text = "— Spotify —", enabled = false } })
     table.insert(rows, { { text = T("Account: %1", self.spotify_active and self.spotify_active.name or T("none"))
         .. "  (" .. T("change / add / remove") .. ")", callback = function()
