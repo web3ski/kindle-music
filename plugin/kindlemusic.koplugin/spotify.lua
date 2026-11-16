@@ -14,6 +14,7 @@ local http = require("socket.http")
 local ltn12 = require("ltn12")
 local JSON = require("json")
 local T = require("l10n").T
+local logger = require("logger")
 
 local TOKEN_URL = "https://accounts.spotify.com/api/token"
 local API = "https://api.spotify.com/v1"
@@ -454,9 +455,10 @@ function Spotify:track(id)
     return Spotify.normTrack(d)
 end
 
--- Older apps use /me/tracks; newer development-mode apps only get /me/library.
+-- Since February 2026 development-mode apps must use /me/library (URIs); /me/tracks
+-- (IDs) answers 403/404 there. Try the new endpoint first, the old one as a fallback.
 local function library_fallback(code)
-    return code == 404 or code == 410 or code == 400
+    return code ~= nil and code ~= 401 and code ~= 429
 end
 
 local function scope_error(err, code)
@@ -466,22 +468,30 @@ end
 
 --- Is the track in the user's Liked Songs? Returns true/false, or nil, err.
 function Spotify:isSaved(id)
-    local d, e, code = self:api("GET", "/me/tracks/contains", { ids = id })
-    if not d and library_fallback(code) then
-        d, e, code = self:api("GET", "/me/library/contains", { uris = "spotify:track:" .. id })
+    local d, e, code = self:api("GET", "/me/library/contains", { uris = "spotify:track:" .. id })
+    if type(d) ~= "table" and library_fallback(code) then
+        logger.warn("Spotify: /me/library/contains failed", code, e)
+        d, e, code = self:api("GET", "/me/tracks/contains", { ids = id })
     end
-    if type(d) ~= "table" then return nil, scope_error(e, code) end
+    if type(d) ~= "table" then
+        logger.warn("Spotify: contains failed", code, e)
+        return nil, scope_error(e, code)
+    end
     return d[1] == true
 end
 
 --- Add (save = true) or remove (save = false) a track from Liked Songs.
 function Spotify:saveTrack(id, save)
     local method = save == false and "DELETE" or "PUT"
-    local d, e, code = self:api(method, "/me/tracks", { ids = id })
+    local d, e, code = self:api(method, "/me/library", { uris = "spotify:track:" .. id })
     if not d and library_fallback(code) then
-        d, e, code = self:api(method, "/me/library", { uris = "spotify:track:" .. id })
+        logger.warn("Spotify:", method, "/me/library failed", code, e)
+        d, e, code = self:api(method, "/me/tracks", { ids = id })
     end
-    if not d then return nil, scope_error(e, code) end
+    if not d then
+        logger.warn("Spotify:", method, "/me/tracks failed", code, e)
+        return nil, scope_error(e, code)
+    end
     return true
 end
 
