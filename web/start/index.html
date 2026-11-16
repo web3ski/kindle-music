@@ -89,23 +89,35 @@ You need <b>Spotify Premium</b>. Spotify only gives small projects access throug
 free "developer app", so one person in the household creates it once (about 5 minutes, on a phone or computer).</p>
 
 <h3>A. Create your Spotify app (once per household)</h3>
+<p>Never done this? No problem: it's free, nothing gets published, and you don't need to know anything about programming.
+It works on a phone, and the Kindle's phone page (part B) walks you through the same steps.</p>
 <ol>
-  <li>Open <a href="https://developer.spotify.com/dashboard">developer.spotify.com/dashboard</a> and log in with your Spotify account. Accept the terms if asked.</li>
-  <li>Tap <b>Create app</b>. Name: anything, for example <i>Kindle Music</i>. Description: anything.</li>
-  <li>In <b>Redirect URIs</b> paste exactly this address and tap <b>Add</b>:</li>
+  <li><b>Open the Spotify developer website.</b>
+    <p><a class="btn" href="https://developer.spotify.com/dashboard">Open developer.spotify.com/dashboard</a></p>
+    Tap <b>Log in</b> and sign in with the same Spotify account you use to listen to music.</li>
+  <li><b>First time only: accept the terms.</b> If Spotify shows <i>Developer Terms of Service</i>, tick the box and tap <b>Accept the terms</b>.
+    If it asks you to verify your e-mail, open the e-mail from Spotify, tap the link in it and go back to the dashboard.</li>
+  <li><b>Start a new app.</b> On the dashboard tap <b>Create app</b> (on a phone you may need to scroll). A form called <i>Create app</i> opens.</li>
+  <li><b>Name the app.</b> App name: <code>Kindle Music</code>. App description: <code>Remote for my Kindle</code>. Website: leave it empty.
+    The names don't matter; only you will see them.</li>
+  <li><b>Add the Redirect URI.</b> Tap <b>Copy</b> under the address below. In the Spotify form tap the <b>Redirect URIs</b> field, paste it and tap <b>Add</b>.
+    The address appears in a list under the field. It must be exactly the same, including the slash at the end.</li>
 </ol>
 <div class="cmd"><span class="t">https://web3ski.github.io/kindle-music/callback/</span><button type="button">Copy</button></div>
-<ol start="4">
-  <li>Under <b>Which API/SDKs are you planning to use?</b> tick <b>Web API</b>, accept the terms and tap <b>Save</b>.</li>
-  <li>Open the app's <b>Settings</b>. You will need the <b>Client ID</b> (32 letters and digits) in part B.</li>
-  <li>Other people in the household: in the app's <b>User Management</b>, add their name and the e-mail of their Spotify account (up to 5 people).</li>
+<ol start="6">
+  <li><b>Tick Web API and save.</b> Under <i>Which API/SDKs are you planning to use?</i> tick <b>Web API</b> and leave the others unticked.
+    Tick <i>I understand and agree with Spotify's Developer Terms of Service…</i> and tap <b>Save</b>. The page of your new app opens.</li>
+  <li><b>Other people in the household (optional).</b> Only if someone else will link their own Spotify account: on the app's page tap
+    <b>Settings</b>, then the <b>User Management</b> tab. Type their name and the e-mail of their Spotify account and tap <b>Add user</b> (up to 5 people).</li>
+  <li><b>Copy the Client ID.</b> On the app's page tap <b>Settings</b>. Under <i>Basic Information</i> you see <b>Client ID</b>,
+    a code of 32 letters and digits. Copy it; you paste it in part B. You don't need the <i>Client secret</i>, and it should stay private.</li>
 </ol>
 
 <h3>B. Link a Spotify account to the Kindle</h3>
 <ol>
   <li>On the Kindle open Kindle Music → <b>Settings</b> → <b>Account</b> → <b>+ Add account with your phone</b>. A QR code appears.</li>
   <li>Make sure your phone is on the <b>same Wi-Fi</b> as the Kindle, then scan the code with the phone's camera.</li>
-  <li>On the page that opens, paste the <b>Client ID</b> (only the first time) and tap <b>Sign in with Spotify</b>.</li>
+  <li>On the page that opens, tap <b>Yes, I have a Client ID</b>, paste it and tap <b>Sign in with Spotify</b>. No Spotify app yet? Tap <b>No, show me how</b> and the phone guides you through part A.</li>
   <li>Log in with the Spotify account that should be used on this Kindle and tap <b>Agree</b>.</li>
   <li>The phone shows <b>Linked</b> and the Kindle shows the account name. Done.</li>
 </ol>
@@ -113,9 +125,10 @@ free "developer app", so one person in the household creates it once (about 5 mi
 (Settings → Services &amp; Voice → Add a service → Spotify). Several accounts can be linked; pick the active one under Settings → Account.
 Linked before version 0.2? Link the account again once, so the Like button gets its new permission.</small></p>
 <ul>
-  <li><b>"INVALID_CLIENT: Invalid redirect URI":</b> the Redirect URI in your Spotify app is not exactly the address above (check the slash at the end).</li>
+  <li><b>"INVALID_CLIENT: Invalid redirect URI":</b> the Redirect URI in your Spotify app is not exactly the address above (check the slash at the end). Fix it on the app's page under Settings → Edit.</li>
   <li><b>The phone can't open the Kindle page:</b> the phone must be on the same Wi-Fi as the Kindle (not mobile data, not a guest network).</li>
-  <li><b>"User not registered in the Developer Dashboard":</b> add that person in the app's User Management.</li>
+  <li><b>"User not registered in the Developer Dashboard":</b> add that person in the app's User Management (step 7).</li>
+  <li><b>"Premium required" or nothing plays:</b> the account that created the Spotify app needs Spotify Premium.</li>
 </ul>
 
 <p><small>Source code: <a href="https://github.com/web3ski/kindle-music">github.com/web3ski/kindle-music</a> · AGPL-3.0</small></p>

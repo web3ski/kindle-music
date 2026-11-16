@@ -78,9 +78,9 @@ code{background:#f0f0f0;padding:2px 5px;border-radius:4px;word-break:break-all}
 .step h2{font-size:15px;color:#555;margin:0 0 4px;font-weight:600}
 .step h3{font-size:20px;margin:0 0 10px}
 .nav{display:flex;gap:10px}.nav>*{flex:1}
-.copy{display:flex;gap:8px;align-items:stretch;margin:10px 0}
-.copy code{flex:1;padding:10px;font-size:14px}
-.copy button{width:auto;margin:0;padding:10px 14px;font-size:15px}
+.copy{margin:12px 0}
+.copy textarea{display:block;width:100%;box-sizing:border-box;resize:none;font:16px ui-monospace,monospace;padding:10px;background:#f0f0f0;border:2px solid #111;border-radius:8px;text-align:center;word-break:break-all}
+.copy button{margin-top:8px}
 .js .step{display:none}.js .step.on{display:block}
 </style></head><body>]] .. body .. "</body></html>"
 end
@@ -203,10 +203,10 @@ end
 -- is often missing, so fall back to selecting the text and execCommand("copy").
 local COPY_JS = [[<script>
 document.documentElement.className='js';
-function kmCopy(b){var c=b.parentNode.getElementsByTagName('code')[0],ok=false;
-try{if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(c.textContent);ok=true}}catch(e){}
-if(!ok){try{var r=document.createRange();r.selectNodeContents(c);var s=getSelection();s.removeAllRanges();s.addRange(r);ok=document.execCommand('copy')}catch(e){}}
-b.textContent=ok?b.getAttribute('data-done'):b.getAttribute('data-sel');}
+function kmCopy(b){var c=b.parentNode.getElementsByTagName('textarea')[0],v=c.value,done=function(){b.textContent=b.getAttribute('data-done')};
+var sel=function(){var ok=false;try{c.focus();c.select();c.setSelectionRange(0,v.length);ok=document.execCommand('copy')}catch(e){}
+if(ok){done()}else{b.textContent=b.getAttribute('data-sel')}};
+if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(v).then(done,sel)}else{sel()}}
 function kmStep(n){var s=document.querySelectorAll('.step');for(var i=0;i<s.length;i++){s[i].className='step'+(i==n?' on':'')}scrollTo(0,0);return false}
 </script>]]
 
@@ -231,27 +231,75 @@ function Server:pageForm(c, error_text)
     send(c, "200 OK", "text/html; charset=utf-8", page("Kindle Music", body))
 end
 
---- Step-by-step guide for creating the Spotify developer app, one step per screen.
+local function steplist(items)
+    local t = { "<ol>" }
+    for _, it in ipairs(items) do t[#t + 1] = "<li>" .. html_escape(it) .. "</li>" end
+    t[#t + 1] = "</ol>"
+    return table.concat(t)
+end
+
+--- Step-by-step guide for creating the Spotify developer app, one step per screen,
+--- written for someone who has never created a developer app.
 function Server:pageSetup(c)
     local steps = {
-        { T("Open the Spotify dashboard"),
-          "<p>" .. html_escape(T("Open the dashboard and log in with your Spotify account. Accept the developer terms if Spotify asks.")) .. "</p>"
+        { T("Open the Spotify developer website"),
+          steplist{
+              T("Tap the button below. The Spotify for Developers website opens in a new tab."),
+              T("Tap “Log in” and sign in with the same Spotify account you use to listen to music."),
+              T("Keep this page open. After each step, switch back to this tab and tap “Next”."),
+          }
           .. '<a class="btn" href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">' .. html_escape(T("Open developer.spotify.com")) .. "</a>"
-          .. "<p class=\"note\">" .. html_escape(T("It opens in a new tab. Keep this page open and come back to it after each step.")) .. "</p>" },
-        { T("Create an app"),
-          "<p>" .. html_escape(T("Tap “Create app”. App name and description can be anything, for example “Kindle Music”.")) .. "</p>" },
+          .. "<p class=\"note\">" .. html_escape(T("It's free and does not change your Spotify subscription.")) .. "</p>" },
+        { T("First time only: accept the terms"),
+          steplist{
+              T("If Spotify shows “Developer Terms of Service”, tick the box and tap “Accept the terms”."),
+              T("If it asks you to verify your e-mail, open the e-mail from Spotify, tap the link in it, then go back to the dashboard."),
+          }
+          .. "<p class=\"note\">" .. html_escape(T("Nothing like this appeared? Just tap “Next”.")) .. "</p>" },
+        { T("Start a new app"),
+          steplist{
+              T("On the dashboard tap “Create app”. On a phone you may need to scroll to find it."),
+              T("A form called “Create app” opens. The next steps fill it in."),
+          } },
+        { T("Name the app"),
+          steplist{
+              T("App name: type Kindle Music"),
+              T("App description: type Remote for my Kindle"),
+              T("Website: leave it empty."),
+          }
+          .. "<p class=\"note\">" .. html_escape(T("The names don't matter. Only you will see them.")) .. "</p>" },
         { T("Add the Redirect URI"),
-          "<p>" .. html_escape(T("In “Redirect URIs” paste this address exactly and tap “Add”:")) .. "</p>"
-          .. '<div class="copy"><code>' .. html_escape(SpotifyLink.REDIRECT_URI) .. '</code><button type="button" onclick="kmCopy(this)" data-done="'
-          .. html_escape(T("Copied")) .. '" data-sel="' .. html_escape(T("Selected, copy it")) .. '">' .. html_escape(T("Copy")) .. "</button></div>"
-          .. "<p class=\"note\">" .. html_escape(T("Including the slash at the end.")) .. "</p>" },
-        { T("Choose Web API and save"),
-          "<p>" .. html_escape(T("Under “Which API/SDKs are you planning to use?” tick “Web API”. Accept the terms and tap “Save”.")) .. "</p>" },
+          steplist{
+              T("Tap the green “Copy the address” button below."),
+              T("Go back to the Spotify form, tap the “Redirect URIs” field, paste the address and tap “Add”."),
+              T("The address now appears in a list under the field. It must be exactly the same, including the slash at the end."),
+          }
+          .. '<div class="copy"><textarea readonly rows="2" onclick="this.select()">' .. html_escape(SpotifyLink.REDIRECT_URI) .. '</textarea>'
+          .. '<button type="button" onclick="kmCopy(this)" data-done="' .. html_escape(T("Copied ✓ Now paste it in Spotify")) .. '" data-sel="'
+          .. html_escape(T("Address selected: tap Copy in the menu")) .. '">' .. html_escape(T("Copy the address")) .. "</button></div>"
+          .. "<p class=\"note\">" .. html_escape(T("Can't paste? Type it by hand, carefully.")) .. "</p>" },
+        { T("Tick Web API and save"),
+          steplist{
+              T("Under “Which API/SDKs are you planning to use?” tick “Web API”. Leave the others unticked."),
+              T("Tick the box “I understand and agree with Spotify's Developer Terms of Service…”."),
+              T("Tap “Save”. The page of your new app opens."),
+          }
+          .. "<p class=\"note\">" .. html_escape(T("An error about the Redirect URI? Check the previous step: the address must start with https:// and end with a slash.")) .. "</p>" },
         { T("Other people in the household (optional)"),
-          "<p>" .. html_escape(T("Will someone else link their own Spotify account? In the app open “User Management” and add their name and the e-mail of their Spotify account. Up to 5 people.")) .. "</p>" },
+          steplist{
+              T("Only if someone else will link their own Spotify account to a Kindle."),
+              T("On your app's page tap “Settings”, then the “User Management” tab."),
+              T("Type their name and the e-mail address of their Spotify account and tap “Add user”. Up to 5 people."),
+          }
+          .. "<p class=\"note\">" .. html_escape(T("Not needed for your own account.")) .. "</p>" },
         { T("Copy the Client ID"),
-          "<p>" .. html_escape(T("In the app open “Settings” and copy the “Client ID” (32 letters and digits). You don't need the Client secret.")) .. "</p>"
-          .. client_id_form(self) },
+          steplist{
+              T("On your app's page tap “Settings”."),
+              T("Under “Basic Information” you see “Client ID”: a long code of 32 letters and digits. Copy it (press and hold to select it, then Copy)."),
+              T("Come back here, paste it into the field below and tap “Sign in with Spotify”."),
+          }
+          .. client_id_form(self)
+          .. "<p class=\"note\">" .. html_escape(T("Don't copy the “Client secret”. It is not needed and should stay private.")) .. "</p>" },
     }
     local body = "<h1>" .. html_escape(T("Create your Spotify app")) .. "</h1>"
     for i, st in ipairs(steps) do
