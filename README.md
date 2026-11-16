@@ -21,8 +21,10 @@ Spotify Connect).
   shuffle/repeat, sleep timer; auto-discovery and per-household profiles.
 - Spotify: browse library/playlists, search, radio, play on Sonos or any Spotify Connect device.
 - "Like" button: add the current track to (or remove it from) Spotify Liked Songs. Needs the
-  `user-library-modify` permission; if you linked Spotify before this version, run
-  `tools/link_spotify.py` again.
+  `user-library-modify` permission; if you linked Spotify before 0.2, link the account again.
+- Link a Spotify account from the Kindle: Settings → Account → "+ Add account with your phone"
+  shows a QR code; scan it with a phone on the same Wi-Fi and sign in. Setup guide:
+  https://web3ski.github.io/kindle-music/start/#spotify
 - Remote screen for e-ink: album-art thumbnail, icons for playback/shuffle/repeat/sleep timer,
   a volume slider (tap or drag), Like and Radio next to the playback status, a sleep timer menu
   (off, 15–90 min, end of this track). Tap a room to play there or add it to / remove it from
@@ -41,7 +43,7 @@ Spotify Connect).
 ```
 plugin/kindlemusic.koplugin/   KOReader plugin
 plugin/scriptlet/        optional Kindle home-screen launcher
-tools/link_spotify.py    one-time Spotify account linking (PKCE)
+tools/link_spotify.py    alternative Spotify linking from a computer (PKCE)
 docs/                    install + security notes
 package/                 KPM package (manifest + install hooks)
 web/                     install guide at /start and download test (GitHub Pages)
