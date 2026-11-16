@@ -6,5 +6,5 @@
   "description": "Sonos remote (and optional Spotify) for KOReader on jailbroken Kindles.",
   "version": [0, 3, 0],
   "dependencies": [{"id": "koreader"}],
-  "supported_platforms": ["kindlehf", "kindlepw2"]
+  "supported_platforms": ["kindlehf"]
 }
