@@ -250,9 +250,28 @@ function SleepScreen.nextCheck(np)
 end
 
 local function unschedule()
+    SleepScreen._token = nil -- cancels a pending fallback timer
     if Device.wakeup_mgr and SleepScreen._wake then
         Device.wakeup_mgr:removeTasks(nil, SleepScreen._wake)
     end
+end
+
+--- Check again in `wait` seconds. Two paths, whichever comes first:
+-- * RTC alarm (WakeupMgr): only armed once powerd reaches ReadyToSuspend, which on Kindle can take
+--   a minute or more after the sleep screen appears; a due time that passes before that is dropped.
+-- * UIManager timer: covers that window, while KOReader still runs on the sleep screen. Its clock
+--   stops during real suspend, so it is ignored once a newer check was armed.
+local function arm(wait)
+    local UIManager = require("ui/uimanager")
+    local token = {}
+    SleepScreen._token = token
+    Device.wakeup_mgr:addTask(wait, SleepScreen._wake)
+    UIManager:scheduleIn(wait + 2, function()
+        if SleepScreen._token ~= token or not Device.screen_saver_mode then return end
+        logger.info("kindlemusic: sleep-screen update (not suspended yet)")
+        Device.wakeup_mgr:removeTasks(nil, SleepScreen._wake)
+        SleepScreen._wake()
+    end)
 end
 
 local function schedule(np)
@@ -261,7 +280,7 @@ local function schedule(np)
     local wait = SleepScreen.nextCheck(np)
     if not wait then return end
     logger.info("kindlemusic: next sleep-screen update in", wait, "s")
-    Device.wakeup_mgr:addTask(wait, SleepScreen._wake)
+    arm(wait)
 end
 
 --- Replace the picture on the sleep screen that is currently shown.
@@ -285,8 +304,10 @@ end
 function SleepScreen._wake()
     local UIManager = require("ui/uimanager")
     local NetworkMgr = require("ui/network/manager")
+    SleepScreen._token = nil
     local np = SleepScreen.now_playing
     if not np or not live_enabled() then return end
+    logger.info("kindlemusic: updating the sleep screen")
     local started = os.time()
     local function attempt()
         local Screensaver = require("ui/screensaver")
@@ -306,17 +327,18 @@ function SleepScreen._wake()
             np.failures = (np.failures or 0) + 1
             logger.warn("kindlemusic: sleep-screen update failed (offline?)", np.failures)
             unschedule()
-            if np.failures < 3 then
-                Device.wakeup_mgr:addTask(is_charging() and MAX_WAIT_CHARGING or STREAM_WAIT, SleepScreen._wake)
-            end
+            if np.failures < 3 then arm(is_charging() and MAX_WAIT_CHARGING or STREAM_WAIT) end
             return
         end
         np.failures = 0
         local okp, err = pcall(repaint, np)
         if not okp then logger.warn("kindlemusic: sleep-screen repaint failed:", err) end
+        logger.info("kindlemusic: sleep screen now shows", np.state, np.title)
         schedule(np)
     end
-    attempt()
+    -- Next UI tick: WakeupMgr removes the task it just ran (queue position 1) after this callback
+    -- returns, which would otherwise be the next alarm we add here.
+    UIManager:nextTick(attempt)
 end
 
 --- Install the Screensaver hook once per KOReader run; `plugin` is the newest plugin instance.
