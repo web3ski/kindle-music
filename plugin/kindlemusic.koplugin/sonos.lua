@@ -235,6 +235,22 @@ function Sonos.changeVolume(group, delta)
     return tonumber(tag(resp, "NewVolume"))
 end
 
+--- Set an absolute volume (0..100) for a group or a single room; returns the volume.
+function Sonos.setVolume(group, v)
+    v = math.max(0, math.min(100, math.floor(v)))
+    local resp, err
+    if #group.members > 1 then
+        Sonos.soap(group.ip, "GroupRenderingControl", "SnapshotGroupVolume", { {"InstanceID", 0} })
+        resp, err = Sonos.soap(group.ip, "GroupRenderingControl", "SetGroupVolume",
+            { {"InstanceID", 0}, {"DesiredVolume", v} })
+    else
+        resp, err = Sonos.soap(group.ip, "RenderingControl", "SetVolume",
+            { {"InstanceID", 0}, {"Channel", "Master"}, {"DesiredVolume", v} })
+    end
+    if not resp then return nil, err end
+    return v
+end
+
 --- Sonos household (system) ID, e.g. "Sonos_XXXXXXXXXXXXXXXX".
 function Sonos.getHouseholdID(ip)
     local resp, err = Sonos.soap(ip, "DeviceProperties", "GetHouseholdID")

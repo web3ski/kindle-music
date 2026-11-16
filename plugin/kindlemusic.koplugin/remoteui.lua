@@ -20,6 +20,7 @@ local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
+local logger = require("logger")
 local Screen = Device.screen
 
 local RemoteUI = {}
@@ -190,12 +191,15 @@ function Slider:init()
     self.knob = math.floor(self.height * 0.55)
     self.bar_h = math.max(Screen:scaleBySize(10), math.floor(self.height * 0.2))
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
+    local range = function() return self.dimen end
     self.ges_events = {
-        TapSlider = { GestureRange:new{ ges = "tap", range = self.dimen } },
-        PanSlider = { GestureRange:new{ ges = "pan", range = self.dimen, rate = 4 } },
-        PanReleaseSlider = { GestureRange:new{ ges = "pan_release", range = self.dimen } },
-        SwipeSlider = { GestureRange:new{ ges = "swipe", range = self.dimen } },
-        HoldSlider = { GestureRange:new{ ges = "hold", range = self.dimen } },
+        TapSlider = { GestureRange:new{ ges = "tap", range = range } },
+        PanSlider = { GestureRange:new{ ges = "pan", range = range, rate = 4 } },
+        HoldPanSlider = { GestureRange:new{ ges = "hold_pan", range = range, rate = 4 } },
+        PanReleaseSlider = { GestureRange:new{ ges = "pan_release", range = range } },
+        HoldReleaseSlider = { GestureRange:new{ ges = "hold_release", range = range } },
+        SwipeSlider = { GestureRange:new{ ges = "swipe", range = range } },
+        HoldSlider = { GestureRange:new{ ges = "hold", range = range } },
     }
 end
 
@@ -238,6 +242,7 @@ function Slider:preview(v)
 end
 
 function Slider:commit(v)
+    logger.info("KindleMusic: slider commit", v)
     if self._commit_timer then UIManager:unschedule(self._commit_timer); self._commit_timer = nil end
     self._dragging = false
     self:preview(v)
@@ -245,6 +250,7 @@ function Slider:commit(v)
 end
 
 function Slider:onTapSlider(_, ges)
+    logger.info("KindleMusic: slider tap", ges.pos.x, self.dimen.x, self.dimen.w)
     self:commit(self:valueAt(ges.pos.x))
     return true
 end
@@ -265,6 +271,16 @@ function Slider:onPanSlider(_, ges)
         if self._dragging then self:commit(self.value) end
     end
     UIManager:scheduleIn(0.8, self._commit_timer)
+    return true
+end
+
+function Slider:onHoldPanSlider(_, ges)
+    return self:onPanSlider(_, ges)
+end
+
+function Slider:onHoldReleaseSlider(_, ges)
+    self._dragging = false
+    self:commit(self:valueAt(ges.pos.x))
     return true
 end
 

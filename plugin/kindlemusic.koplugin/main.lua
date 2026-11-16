@@ -834,8 +834,22 @@ end
 
 --- Set the volume to an absolute value (from the slider).
 function SonosRemote:setVolume(v)
-    if not self.volume or v == self.volume then return end
-    self:changeVolume(v - self.volume)
+    logger.info("KindleMusic: slider volume", v, "was", self.volume)
+    if self.connect then
+        local sp = self.plugin:spotify()
+        if not sp then return end
+        local ok, err = guarded(sp.setVolume, sp, self.connect.id, v)
+        if not ok then toast(Spotify.describeError(err)) return end
+        self.volume = v
+        self:redraw()
+        return
+    end
+    local group = self:currentGroup()
+    if not group then return end
+    local vol, err = guarded(Sonos.setVolume, group, v)
+    if not vol then toast(Sonos.describeError(err)) return end
+    self.volume = vol
+    self:redraw()
 end
 
 --- All visible rooms: rooms of the current group first, then the rest by name.
@@ -857,11 +871,19 @@ function SonosRemote:roomList()
     return first
 end
 
+-- Sonos publishes the new grouping 1-3 s after the command, so read it again a bit later.
 function SonosRemote:afterRegroup(seed_ip, focus_uuid)
-    self.plugin:refreshTopology(seed_ip)
-    self.groups = self.plugin:visibleGroups()
     if focus_uuid then self.plugin:profileSet("last_group", focus_uuid) end
-    self:refresh(true)
+    local function reload()
+        if self.closed then return end
+        self.plugin:refreshTopology(seed_ip)
+        self.groups = self.plugin:visibleGroups()
+        self.state, self.volume = nil, nil
+        self:refresh(true)
+    end
+    reload()
+    UIManager:scheduleIn(1.5, reload)
+    UIManager:scheduleIn(4, reload)
 end
 
 --- Tap on a room: play there, add it to the group, or take it out of the group.
