@@ -484,8 +484,15 @@ end
 
 --- Sleep timer: minutes (0/nil = off). Remaining as "H:MM:SS" or "".
 function Sonos.setSleepTimer(ip, minutes)
+    return Sonos.setSleepTimerSeconds(ip, (minutes or 0) * 60)
+end
+
+function Sonos.setSleepTimerSeconds(ip, seconds)
     local v = ""
-    if minutes and minutes > 0 then v = string.format("%02d:%02d:00", math.floor(minutes / 60), minutes % 60) end
+    seconds = math.floor(seconds or 0)
+    if seconds > 0 then
+        v = string.format("%02d:%02d:%02d", math.floor(seconds / 3600), math.floor(seconds / 60) % 60, seconds % 60)
+    end
     return Sonos.soap(ip, "AVTransport", "ConfigureSleepTimer", { {"InstanceID", 0}, {"NewSleepTimerDuration", v} })
 end
 
@@ -521,6 +528,14 @@ end
 function Sonos.joinGroup(member_ip, coordinator_uuid)
     return Sonos.soap(member_ip, "AVTransport", "SetAVTransportURI", {
         {"InstanceID", 0}, {"CurrentURI", "x-rincon:" .. coordinator_uuid}, {"CurrentURIMetaData", ""},
+    })
+end
+
+--- Hand the group over to another member (new_uuid). rejoin=false: the old
+-- coordinator leaves the group, so the music "moves" to the remaining rooms.
+function Sonos.delegateTo(coordinator_ip, new_uuid, rejoin)
+    return Sonos.soap(coordinator_ip, "AVTransport", "DelegateGroupCoordinationTo", {
+        {"InstanceID", 0}, {"NewCoordinator", new_uuid}, {"RejoinGroup", rejoin and 1 or 0},
     })
 end
 

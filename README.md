@@ -23,7 +23,10 @@ Spotify Connect).
 - "Like" button: add the current track to (or remove it from) Spotify Liked Songs. Needs the
   `user-library-modify` permission; if you linked Spotify before this version, run
   `tools/link_spotify.py` again.
-- Small album-art thumbnail next to the track title on the remote.
+- Remote screen for e-ink: album-art thumbnail, icons for playback/shuffle/repeat/sleep timer,
+  a volume slider (tap or drag), Like and Radio next to the playback status, a sleep timer menu
+  (off, 15–90 min, end of this track). Tap a room to play there or add it to / remove it from
+  the group; "+N more" lists every room and the Spotify Connect devices.
 - "Now playing" sleep screen: when the Kindle sleeps inside KOReader while music plays (or while
   the remote is open), the sleep screen shows the cover, title, artist, album and room instead of
   the usual KOReader screensaver. While music plays, the Kindle wakes up briefly (RTC alarm) when
