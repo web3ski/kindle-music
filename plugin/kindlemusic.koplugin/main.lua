@@ -17,6 +17,7 @@ local Event = require("ui/event")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
+local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local ImageWidget = require("ui/widget/imagewidget")
@@ -44,6 +45,7 @@ local Screen = Device.screen
 local Sonos = require("sonos")
 local Spotify = require("spotify")
 local SpotifyUI = require("spotifyui")
+local RemoteUI = require("remoteui")
 local SleepScreen = require("sleepscreen")
 
 -- No built-in speakers: they are found by auto-discovery (subnet scan) or entered in
@@ -64,6 +66,18 @@ local STATE_LABELS = {
 --- Run fn with short network timeouts; never throws.
 local function guarded(fn, ...)
     socketutil:set_timeout(2, 5)
+    local ok, a, b = pcall(fn, ...)
+    socketutil:reset_timeout()
+    if not ok then
+        logger.warn("Sonos: error", a)
+        return nil, tostring(a)
+    end
+    return a, b
+end
+
+--- Like guarded(), but with long timeouts for regrouping commands that answer slowly.
+local function guarded_slow(fn, ...)
+    socketutil:set_timeout(5, 25)
     local ok, a, b = pcall(fn, ...)
     socketutil:reset_timeout()
     if not ok then
@@ -112,43 +126,53 @@ function SonosRemote:build()
     local width = Screen:getWidth()
     local inner_w = width - 2 * Size.padding.fullscreen
     local group = self:currentGroup()
+    local S = function(v) return Screen:scaleBySize(v) end
 
     local title_bar = TitleBar:new{
         width = width,
         fullscreen = true,
         with_bottom_line = true,
-        title = "Sonos",
-        subtitle = self.connect and ("Spotify Connect: " .. self.connect.name) or (group and group.name or T("No speakers")),
+        title = "Kindle Music",
         close_callback = function() UIManager:close(self) end,
         show_parent = self,
     }
 
-    -- Room selector: one button per group, max 3 per row
-    local room_rows, row = {}, {}
-    for _, g in ipairs(self.groups) do
-        local selected = not self.connect and group and g.coordinator == group.coordinator
-        table.insert(row, {
-            text = (selected and "● " or "") .. g.name,
-            font_bold = selected,
-            callback = function() self:selectGroup(g) end,
-        })
-        if #row == 3 then
-            table.insert(room_rows, row)
-            row = {}
-        end
+    -- Where the music plays: up to 3 rooms (current group first) + "+N more"
+    local rooms = self:roomList()
+    local in_group = {}
+    if group and not self.connect then
+        for _, m in ipairs(group.members) do in_group[m.uuid] = true end
     end
-    if #row > 0 then table.insert(room_rows, row) end
-    local extra = {}
-    if #self.groups > 0 and not self.connect then
-        table.insert(extra, { text = T("Group rooms…"), callback = function() self:showGrouping() end })
+    local room_specs = {}
+    if self.connect then
+        room_specs[#room_specs + 1] = { content = RemoteUI.text(self.connect.name, 18, true, math.floor(inner_w / 3) - S(8)),
+            inverted = true, weight = 1.15, callback = function() self:showSpeakers() end }
     end
-    table.insert(extra, { text = (self.connect and "● " or "") .. T("Other devices…"),
-        callback = function() self:showConnectDevices() end })
-    table.insert(room_rows, extra)
-    if #room_rows == 0 then
-        room_rows = { { { text = T("Find speakers"), callback = function() self:rediscover() end } } }
+    local shown = 0
+    for _, r in ipairs(rooms) do
+        if #room_specs >= 3 then break end
+        local m = r.member
+        room_specs[#room_specs + 1] = {
+            content = RemoteUI.text(m.name, 18, in_group[m.uuid], math.floor(inner_w / 4) - S(8)),
+            inverted = in_group[m.uuid] or false,
+            callback = function() self:roomTapped(r) end,
+        }
+        shown = shown + 1
     end
+    local more = #rooms - shown
+    room_specs[#room_specs + 1] = {
+        content = HorizontalGroup:new{ align = "center",
+            RemoteUI.text(more > 0 and T("+%1 more", more) or T("More"), 17),
+            RemoteUI.icon("chevron_down", S(18)) },
+        callback = function() self:showSpeakers() end,
+    }
+    if #rooms == 0 and not self.connect then
+        room_specs = { { content = RemoteUI.text(T("Find speakers"), 18), callback = function() self:rediscover() end } }
+    end
+    local room_label = RemoteUI.text(T("PLAYING ON"), 13)
+    local room_row = RemoteUI.row(room_specs, inner_w, S(64), self)
 
+    -- Now playing: cover, title, artist · album, status + Like / Radio
     local track = self.track or {}
     local title_text = track.title and track.title ~= "" and track.title or "—"
     local sub_parts = {}
@@ -156,11 +180,31 @@ function SonosRemote:build()
     if track.album and track.album ~= "" then table.insert(sub_parts, track.album) end
     local status = self.error or (STATE_LABELS[self.state] and T(STATE_LABELS[self.state]) or self.state or "…")
 
-    -- small cover next to title/artist while something is loaded
     local has_track = track.title and track.title ~= "" and track.title ~= "—"
-    local thumb_side = Screen:scaleBySize(120)
+    local thumb_side = S(120)
     local thumb_gap = Size.padding.large * 2
     local text_w = has_track and (inner_w - thumb_side - thumb_gap) or inner_w
+
+    local status_line
+    local sp_linked = self.plugin:spotify() ~= nil
+    if not self.error and has_track and track.spotify_id then
+        status_line = HorizontalGroup:new{ align = "center",
+            RemoteUI.text(status, 18),
+            HorizontalSpan:new{ width = S(12) },
+        }
+        if sp_linked then
+            local liked = self.liked and self.liked[track.spotify_id]
+            status_line[#status_line + 1] = RemoteUI.pill(liked and "heart" or "heart_outline",
+                liked and T("Liked") or T("Like"), function() self:toggleLike() end, self)
+            status_line[#status_line + 1] = HorizontalSpan:new{ width = S(8) }
+        end
+        status_line[#status_line + 1] = RemoteUI.pill("radio", T("Radio"), function()
+            self:startSpotify({ kind = "radio", track_id = track.spotify_id, name = T("Radio: %1", track.title or "") })
+        end, self)
+    else
+        status_line = TextBoxWidget:new{ text = status, face = Font:getFace("cfont", 18), width = text_w }
+    end
+
     local now_playing = VerticalGroup:new{
         align = "left",
         TextBoxWidget:new{
@@ -168,7 +212,7 @@ function SonosRemote:build()
             face = Font:getFace("cfont", 30),
             bold = true,
             width = text_w,
-            height = Screen:scaleBySize(90),
+            height = S(90),
             height_adjust = true,
             height_overflow_show_ellipsis = true,
         },
@@ -177,16 +221,12 @@ function SonosRemote:build()
             text = #sub_parts > 0 and table.concat(sub_parts, " · ") or " ",
             face = Font:getFace("cfont", 22),
             width = text_w,
-            height = Screen:scaleBySize(60),
+            height = S(60),
             height_adjust = true,
             height_overflow_show_ellipsis = true,
         },
         VerticalSpan:new{ width = Size.span.vertical_large * 2 },
-        TextBoxWidget:new{
-            text = status,
-            face = Font:getFace("cfont", 20),
-            width = text_w,
-        },
+        status_line,
     }
     if has_track then
         local thumb
@@ -214,56 +254,64 @@ function SonosRemote:build()
         }
     end
 
-    local big = 26
-    local btn_h = Screen:scaleBySize(80)
+    -- Transport
     local is_playing = self.state == "PLAYING" or self.state == "TRANSITIONING"
-    local controls = ButtonTable:new{
+    local icon_big = S(44)
+    local transport = RemoteUI.row({
+        { content = RemoteUI.icon("previous", icon_big), callback = function() self:command("previous") end },
+        { content = RemoteUI.icon(is_playing and "pause" or "play", S(52)),
+          callback = function() self:command(is_playing and "pause" or "play") end },
+        { content = RemoteUI.icon("next", icon_big), callback = function() self:command("next") end },
+    }, inner_w, S(90), self)
+
+    -- Volume: − slider + number
+    local multi = group and not self.connect and #group.members > 1
+    local volume_row = RemoteUI.row({
+        { content = RemoteUI.icon("volume_down", S(36)), weight = 0.7,
+          callback = function() self:changeVolume(-VOLUME_STEP) end },
+        { weight = 3.2, no_sep = true, make = function(w, h)
+            return RemoteUI.Slider:new{ width = w, height = h, value = self.volume or 0, show_parent = self,
+                on_change = function(v) self:setVolume(v) end }
+        end },
+        { content = RemoteUI.icon("volume_up", S(36)), weight = 0.7, no_sep = true,
+          callback = function() self:changeVolume(VOLUME_STEP) end },
+        { content = multi and VerticalGroup:new{ align = "center",
+                RemoteUI.text(self.volume and tostring(self.volume) or "?", 22, true),
+                HorizontalGroup:new{ align = "center",
+                    RemoteUI.text(self:volTarget() and self:volTarget().name or T("All"), 13, false, S(90)),
+                    RemoteUI.icon("chevron_down", S(14)) },
+            } or RemoteUI.text(self.volume and tostring(self.volume) or "?", 22, true),
+          weight = multi and 1.1 or 0.7,
+          callback = multi and function() self:showVolumeTarget() end or nil },
+    }, inner_w, S(80), self)
+
+    -- Shuffle / repeat / sleep timer (inverted = on)
+    local mode = self.mode or {}
+    local rep = mode.rep or "none"
+    local mode_row = RemoteUI.row({
+        { content = RemoteUI.iconLabel("shuffle", T("Shuffle"), S(36), 15), inverted = mode.shuffle and true or false,
+          callback = function() self:togglePlayMode("shuffle") end },
+        { content = RemoteUI.iconLabel(rep == "one" and "repeat_one" or "repeat", rep == "one" and T("Repeat 1") or T("Repeat"), S(36), 15),
+          inverted = rep ~= "none", callback = function() self:togglePlayMode("repeat") end },
+        { content = RemoteUI.iconLabel("sleep", self.sleep_label or T("Sleep timer"), S(36), 15),
+          inverted = self.sleep_label ~= nil, callback = function() self:showSleepMenu() end },
+    }, inner_w, S(90), self)
+
+    local big = 26
+    local btn_h = S(76)
+    local browse = {}
+    if self.last_browser then
+        table.insert(browse, { text = "‹ " .. (self.last_browser:topTitle() or "Spotify"), font_size = big - 6,
+            height = btn_h, callback = function() self.last_browser:restore() end })
+    end
+    table.insert(browse, { text = "Spotify", font_size = big - 2, height = btn_h,
+        callback = function() self:showSpotify() end })
+    table.insert(browse, { text = T("Sonos favorites"), font_size = big - 6, height = btn_h,
+        callback = function() self:showLibrary() end })
+    local buttons = ButtonTable:new{
         width = inner_w,
         buttons = {
-            {
-                { text = "«", font_size = big + 8, height = btn_h, callback = function() self:command("previous") end },
-                { text = is_playing and T("Pause") or T("Play"), font_size = big, height = btn_h,
-                  callback = function() self:command(is_playing and "pause" or "play") end },
-                { text = "»", font_size = big + 8, height = btn_h, callback = function() self:command("next") end },
-            },
-            {
-                { text = "− " .. VOLUME_STEP, font_size = big, height = btn_h,
-                  callback = function() self:changeVolume(-VOLUME_STEP) end },
-                { text = T("Vol. %1", self.volume and tostring(self.volume) or "?"), font_size = big - 4,
-                  height = btn_h, enabled = (self:currentGroup() and #self:currentGroup().members > 1) or false,
-                  callback = function() self:showRoomVolumes() end },
-                { text = "+ " .. VOLUME_STEP, font_size = big, height = btn_h,
-                  callback = function() self:changeVolume(VOLUME_STEP) end },
-            },
-            {
-                { text = T("Shuffle: %1", (self.mode and self.mode.shuffle) and T("on") or T("off")), font_size = 20,
-                  callback = function() self:togglePlayMode("shuffle") end },
-                { text = T("Repeat: %1", T(({ none = "off", all = "all", one = "track" })[self.mode and self.mode.rep or "none"] or "off")),
-                  font_size = 20, callback = function() self:togglePlayMode("repeat") end },
-                { text = T("Sleep timer: %1", self.sleep_label or T("off")), font_size = 20,
-                  callback = function() self:cycleSleepTimer() end },
-            },
-            (function()
-                local row = {}
-                if self.last_browser then
-                    table.insert(row, { text = "‹ " .. (self.last_browser:topTitle() or "Spotify"), font_size = big - 6,
-                        height = btn_h, callback = function() self.last_browser:restore() end })
-                end
-                table.insert(row, { text = "Spotify", font_size = big - 2, height = btn_h,
-                    callback = function() self:showSpotify() end })
-                if self.track and self.track.spotify_id then
-                    table.insert(row, { text = "Radio", font_size = big - 2, height = btn_h,
-                        callback = function()
-                            self:startSpotify({ kind = "radio", track_id = self.track.spotify_id,
-                                name = T("Radio: %1", self.track.title or "") })
-                        end })
-                end
-                if #row < 3 then
-                    table.insert(row, { text = T("Sonos favorites"), font_size = big - 6, height = btn_h,
-                        callback = function() self:showLibrary() end })
-                end
-                return row
-            end)(),
+            browse,
             {
                 { text = T("Refresh"), font_size = 20, callback = function() self:refresh(true) end },
                 { text = T("Settings"), font_size = 20, callback = function()
@@ -276,20 +324,27 @@ function SonosRemote:build()
         },
     }
 
-    local rooms = ButtonTable:new{ width = inner_w, buttons = room_rows }
-
+    local gap = VerticalSpan:new{ width = S(12) }
+    local function centered(w)
+        return CenterContainer:new{ dimen = Geom:new{ w = width, h = w:getSize().h }, w }
+    end
     local content = VerticalGroup:new{
         align = "left",
         title_bar,
-        VerticalSpan:new{ width = Size.span.vertical_large * 2 },
-        CenterContainer:new{ dimen = Geom:new{ w = width, h = rooms:getSize().h }, rooms },
-        VerticalSpan:new{ width = Size.span.vertical_large * 4 },
-        CenterContainer:new{
-            dimen = Geom:new{ w = width, h = now_playing:getSize().h },
-            now_playing,
-        },
-        VerticalSpan:new{ width = Size.span.vertical_large * 4 },
-        CenterContainer:new{ dimen = Geom:new{ w = width, h = controls:getSize().h }, controls },
+        VerticalSpan:new{ width = S(10) },
+        HorizontalGroup:new{ HorizontalSpan:new{ width = Size.padding.fullscreen }, room_label },
+        VerticalSpan:new{ width = S(4) },
+        centered(room_row),
+        VerticalSpan:new{ width = S(22) },
+        centered(now_playing),
+        VerticalSpan:new{ width = S(22) },
+        centered(transport),
+        gap,
+        centered(volume_row),
+        gap,
+        centered(mode_row),
+        gap,
+        centered(buttons),
     }
 
     self[1] = FrameContainer:new{
@@ -322,10 +377,13 @@ function SonosRemote:fetch()
         self.state = state
         self.track = guarded(Sonos.getTrack, group.ip) or {}
         self.track.spotify_id = self.track.uri and self.track.uri:match("spotify%%3atrack%%3a(%w+)") or nil
-        self.volume = guarded(Sonos.getVolume, group) or self.volume
+        self:checkLiked()
+        local vt = self:volTarget()
+        self.volume = (vt and guarded(Sonos.getSpeakerVolume, vt.ip)) or guarded(Sonos.getVolume, group) or self.volume
         self.mode = guarded(Sonos.getPlayMode, group.ip) or self.mode
         local rem = guarded(Sonos.getSleepTimer, group.ip)
-        self.sleep_label = (rem and rem ~= "") and rem:match("^(%d+:%d+)") or nil
+        local secs = (rem and rem ~= "") and SleepScreen.seconds(rem) or nil
+        self.sleep_label = (secs and secs > 0) and T("%1 min", math.ceil(secs / 60)) or nil
         SleepScreen.update{ title = self.track.title, artist = self.track.artist, album = self.track.album,
             art = self.track.art, state = state, room = group.name, ip = group.ip,
             duration = SleepScreen.seconds(self.track.duration), position = SleepScreen.seconds(self.track.position) }
@@ -345,6 +403,7 @@ function SonosRemote:fetchConnect()
         self.error = nil
         self.state = st.is_playing and "PLAYING" or "PAUSED_PLAYBACK"
         self.track = { title = st.title, artist = st.artist, album = st.album, spotify_id = st.track_id, art = st.image }
+        self:checkLiked()
         self.volume = st.volume
         self.mode = { shuffle = st.shuffle, rep = st.rep }
         SleepScreen.update{ title = st.title, artist = st.artist, album = st.album, art = st.image,
@@ -457,6 +516,32 @@ function SonosRemote:rediscover()
     self.plugin:discover(true)
     self.groups = self.plugin:visibleGroups()
     self:refresh(true)
+end
+
+--- Check once per track whether it is already in Liked Songs.
+function SonosRemote:checkLiked()
+    local id = self.track and self.track.spotify_id
+    self.liked = self.liked or {}
+    if not id or self.liked[id] ~= nil or self.like_checked == id then return end
+    self.like_checked = id
+    local sp = self.plugin:spotify()
+    if not sp then return end
+    local saved = guarded(sp.isSaved, sp, id)
+    if saved ~= nil then self.liked[id] = saved end
+end
+
+--- Add the current track to Spotify Liked Songs (or remove it if it is already there).
+function SonosRemote:toggleLike()
+    local id = self.track and self.track.spotify_id
+    local sp = self.plugin:spotify()
+    if not id or not sp then return end
+    self.liked = self.liked or {}
+    local save = not self.liked[id]
+    local ok, err = guarded(sp.saveTrack, sp, id, save)
+    if not ok then toast(Spotify.describeError(err)) return end
+    self.liked[id] = save
+    toast(save and T("Added to Liked Songs") or T("Removed from Liked Songs"))
+    self:redraw()
 end
 
 function SonosRemote:command(name)
@@ -727,18 +812,445 @@ function SonosRemote:togglePlayMode(which)
     self:redraw()
 end
 
-local SLEEP_STEPS = { 15, 30, 60, 90, 0 }
-function SonosRemote:cycleSleepTimer()
+--- Sleep timer menu: off / 15 / 30 / 60 / 90 min / end of this track.
+function SonosRemote:showSleepMenu()
     if self.connect then toast(T("The sleep timer only works with Sonos speakers")) return end
     local group = self:currentGroup()
     if not group then return end
-    self._sleep_idx = ((self._sleep_idx or 0) % #SLEEP_STEPS) + 1
-    local minutes = SLEEP_STEPS[self._sleep_idx]
-    local ok, err = guarded(Sonos.setSleepTimer, group.ip, minutes)
-    if not ok then toast(Sonos.describeError(err)) return end
-    self.sleep_label = minutes > 0 and string.format("%d min", minutes) or nil
-    toast(minutes > 0 and T("Music will stop in %1 min", minutes) or T("Sleep timer off"))
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local dlg
+    local function set(seconds, label)
+        UIManager:close(dlg)
+        local ok, err = guarded(Sonos.setSleepTimerSeconds, group.ip, seconds)
+        if not ok then toast(Sonos.describeError(err)) return end
+        self.sleep_label = seconds > 0 and T("%1 min", math.ceil(seconds / 60)) or nil
+        toast(label)
+        self:redraw()
+    end
+    local rows = {}
+    if self.sleep_label then
+        rows[#rows + 1] = { { text = T("Turn off"), callback = function() set(0, T("Sleep timer off")) end } }
+    end
+    for _, m in ipairs({ 15, 30, 60, 90 }) do
+        rows[#rows + 1] = { { text = T("%1 min", m), callback = function()
+            set(m * 60, T("Music will stop in %1 min", m))
+        end } }
+    end
+    local track = self.track or {}
+    local dur, pos = SleepScreen.seconds(track.duration), SleepScreen.seconds(track.position)
+    if dur and pos and dur > pos then
+        local left = dur - pos + 2
+        rows[#rows + 1] = { { text = T("End of this track"), callback = function()
+            set(left, T("Music will stop after this track"))
+        end } }
+    end
+    rows[#rows + 1] = { { text = T("Close"), callback = function() UIManager:close(dlg) end } }
+    dlg = ButtonDialog:new{
+        title = self.sleep_label and T("Sleep timer · %1 left", self.sleep_label) or T("Sleep timer"),
+        buttons = rows,
+    }
+    UIManager:show(dlg)
+end
+
+--- Set the volume to an absolute value (from the slider).
+function SonosRemote:setVolume(v)
+    logger.info("KindleMusic: slider volume", v, "was", self.volume)
+    if self.connect then
+        local sp = self.plugin:spotify()
+        if not sp then return end
+        local ok, err = guarded(sp.setVolume, sp, self.connect.id, v)
+        if not ok then toast(Spotify.describeError(err)) return end
+        self.volume = v
+        self:redraw()
+        return
+    end
+    local group = self:currentGroup()
+    if not group then return end
+    local t = self:volTarget()
+    if t then
+        local ok, err = guarded(Sonos.setSpeakerVolume, t.ip, v)
+        if not ok then toast(Sonos.describeError(err)) return end
+        self.volume = math.max(0, math.min(100, v))
+        return self:redraw()
+    end
+    local vol, err = guarded(Sonos.setVolume, group, v)
+    if not vol then toast(Sonos.describeError(err)) return end
+    self.volume = vol
     self:redraw()
+end
+
+--- All visible rooms: rooms of the current group first, then the rest by name.
+function SonosRemote:roomList()
+    local hidden = (self.plugin.profile and self.plugin.profile.hidden) or {}
+    local current = (not self.connect) and self:currentGroup() or nil
+    local first, rest = {}, {}
+    for _, g in ipairs(self.plugin.groups or self.groups or {}) do
+        for _, m in ipairs(g.members) do
+            if not hidden[m.uuid] then
+                local r = { member = m, group = g }
+                if current and g.coordinator == current.coordinator then first[#first + 1] = r
+                else rest[#rest + 1] = r end
+            end
+        end
+    end
+    table.sort(rest, function(a, b) return (a.member.name or "") < (b.member.name or "") end)
+    for _, r in ipairs(rest) do first[#first + 1] = r end
+    return first
+end
+
+-- Sonos publishes the new grouping 1-3 s after the command, so read it again a bit later.
+function SonosRemote:afterRegroup(seed_ip, focus_uuid)
+    if focus_uuid then self.plugin:profileSet("last_group", focus_uuid) end
+    local function reload()
+        if self.closed then return end
+        self.plugin:refreshTopology(seed_ip)
+        self.groups = self.plugin:visibleGroups()
+        self.state, self.volume = nil, nil
+        self:refresh(true)
+    end
+    reload()
+    UIManager:scheduleIn(3, reload)
+end
+
+--- Busy message while speakers are regrouped (taps on rooms are ignored meanwhile).
+function SonosRemote:busy(text)
+    self:unbusy()
+    self._busy = InfoMessage:new{ text = text, dismissable = false }
+    UIManager:show(self._busy)
+    UIManager:forceRePaint()
+end
+
+function SonosRemote:unbusy()
+    if self._busy then
+        UIManager:close(self._busy)
+        self._busy = nil
+    end
+end
+
+local function group_of(groups, uuid)
+    for _, g in ipairs(groups or {}) do
+        for _, x in ipairs(g.members) do
+            if x.uuid == uuid then return g end
+        end
+    end
+end
+
+--- Poll the Sonos topology (via ip) until cond(groups) is true or `timeout` seconds pass.
+function SonosRemote:waitTopology(ip, cond, timeout, cb)
+    local deadline = os.time() + timeout
+    local function check()
+        if self.closed then return end
+        local groups = guarded(Sonos.getGroups, ip)
+        if groups then
+            local desc = {}
+            for _, g in ipairs(groups) do
+                local names = {}
+                for _, x in ipairs(g.members) do names[#names + 1] = x.name end
+                desc[#desc + 1] = table.concat(names, "+")
+            end
+            logger.info("KindleMusic: topology", table.concat(desc, " | "))
+        end
+        if groups and cond(groups) then return cb(true) end
+        if os.time() >= deadline then return cb(false) end
+        UIManager:scheduleIn(0.6, check)
+    end
+    UIManager:scheduleIn(0.5, check)
+end
+
+--- Finish a regroup: close the busy message, reload topology and focus on `uuid`.
+function SonosRemote:regroupDone(ip, uuid, failed_text)
+    self:unbusy()
+    if failed_text then toast(failed_text) end
+    self:afterRegroup(ip, uuid)
+end
+
+--- Room shown in the main volume control (nil = the whole group).
+function SonosRemote:volTarget()
+    local group = self:currentGroup()
+    if not self.vol_target or self.connect or not group or #group.members < 2 then return nil end
+    for _, x in ipairs(group.members) do
+        if x.uuid == self.vol_target then return x end
+    end
+    self.vol_target = nil
+end
+
+--- Choose what the main volume slider controls: the whole group or one room.
+function SonosRemote:showVolumeTarget()
+    local group = self:currentGroup()
+    if not group or #group.members < 2 then return end
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local dlg
+    local cur = self:volTarget()
+    local function pick(uuid)
+        UIManager:close(dlg)
+        self.vol_target = uuid
+        local t = self:volTarget()
+        self.volume = (t and guarded(Sonos.getSpeakerVolume, t.ip)) or guarded(Sonos.getVolume, group) or self.volume
+        self:redraw()
+    end
+    local rows = { { { text = (cur and "" or "● ") .. T("All rooms (group)"), callback = function() pick(nil) end } } }
+    for _, x in ipairs(group.members) do
+        rows[#rows + 1] = { { text = ((cur and cur.uuid == x.uuid) and "● " or "") .. x.name,
+            callback = function() pick(x.uuid) end } }
+    end
+    dlg = ButtonDialog:new{ title = T("Volume slider controls"), buttons = rows }
+    UIManager:show(dlg)
+end
+
+--- Speaker card: its own volume slider, plus group actions.
+local SpeakerDialog = InputContainer:extend{
+    remote = nil,
+    member = nil,
+    actions = nil,
+    modal = true,
+}
+
+function SpeakerDialog:init()
+    self.volume = guarded(Sonos.getSpeakerVolume, self.member.ip)
+    local sw, sh = Screen:getWidth(), Screen:getHeight()
+    self.dimen = Geom:new{ x = 0, y = 0, w = sw, h = sh }
+    self.ges_events = {
+        TapOutside = { GestureRange:new{ ges = "tap", range = self.dimen } },
+    }
+    self:build()
+end
+
+function SpeakerDialog:build()
+    local S = function(v) return Screen:scaleBySize(v) end
+    local w = math.floor(Screen:getWidth() * 0.88)
+    local inner = w - 2 * Size.padding.large * 2
+    local vol_row = RemoteUI.row({
+        { content = RemoteUI.icon("volume_down", S(32)), weight = 0.7,
+          callback = function() self:setVolume((self.volume or 0) - VOLUME_STEP) end },
+        { weight = 3.2, no_sep = true, make = function(cw, ch)
+            return RemoteUI.Slider:new{ width = cw, height = ch, value = self.volume or 0, show_parent = self,
+                on_change = function(v) self:setVolume(v) end }
+        end },
+        { content = RemoteUI.icon("volume_up", S(32)), weight = 0.7, no_sep = true,
+          callback = function() self:setVolume((self.volume or 0) + VOLUME_STEP) end },
+        { content = RemoteUI.text(self.volume and tostring(self.volume) or "?", 22, true), weight = 0.7 },
+    }, inner, S(76), self)
+    local rows = {}
+    for _, a in ipairs(self.actions or {}) do
+        rows[#rows + 1] = { { text = a.text, callback = function()
+            UIManager:close(self)
+            a.callback()
+        end } }
+    end
+    rows[#rows + 1] = { { text = T("Close"), callback = function() UIManager:close(self) end } }
+    local buttons = ButtonTable:new{ width = inner, buttons = rows, show_parent = self }
+    self.frame = FrameContainer:new{
+        background = Blitbuffer.COLOR_WHITE,
+        bordersize = Size.border.window,
+        radius = Size.radius.window,
+        padding = Size.padding.large * 2,
+        VerticalGroup:new{
+            align = "left",
+            TextWidget:new{ text = self.member.name, face = Font:getFace("cfont", 26), bold = true, max_width = inner },
+            VerticalSpan:new{ width = S(6) },
+            TextWidget:new{ text = T("Volume of this room"), face = Font:getFace("cfont", 16), max_width = inner },
+            VerticalSpan:new{ width = S(10) },
+            vol_row,
+            VerticalSpan:new{ width = S(16) },
+            buttons,
+        },
+    }
+    self[1] = CenterContainer:new{ dimen = Geom:new{ w = self.dimen.w, h = self.dimen.h }, self.frame }
+end
+
+function SpeakerDialog:setVolume(v)
+    v = math.max(0, math.min(100, math.floor(v)))
+    local ok, err = guarded(Sonos.setSpeakerVolume, self.member.ip, v)
+    if not ok then toast(Sonos.describeError(err)) return end
+    self.volume = v
+    self:build()
+    UIManager:setDirty(self, "ui", self.frame.dimen)
+end
+
+function SpeakerDialog:onTapOutside(_, ges)
+    if self.frame.dimen and self.frame.dimen:contains(ges.pos) then return true end
+    UIManager:close(self)
+    return true
+end
+
+function SpeakerDialog:onShow()
+    UIManager:setDirty(self, "ui")
+end
+
+function SpeakerDialog:onCloseWidget()
+    UIManager:setDirty(nil, "ui")
+    local r = self.remote
+    if r and not r.closed then
+        local group = r:currentGroup()
+        local t = r:volTarget()
+        if group then
+            r.volume = (t and guarded(Sonos.getSpeakerVolume, t.ip)) or guarded(Sonos.getVolume, group) or r.volume
+        end
+        r:redraw()
+    end
+end
+
+function SonosRemote:showSpeakerDialog(m, group, actions)
+    UIManager:show(SpeakerDialog:new{ remote = self, member = m, actions = actions })
+end
+
+--- Tap on a room: play there, add it to the group, or take it out of the group.
+function SonosRemote:roomTapped(r)
+    if self._busy then return end
+    local m = r.member
+    if self.connect then
+        return self:selectGroup(r.group)
+    end
+    local group = self:currentGroup()
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local dlg
+    local function close() UIManager:close(dlg) end
+    local rows = {}
+    local in_group = false
+    for _, x in ipairs(group and group.members or {}) do
+        if x.uuid == m.uuid then in_group = true end
+    end
+    local not_confirmed = T("The speakers did not confirm the change. Check the Sonos app.")
+    if in_group then
+        local actions = {}
+        local coord = group.members[1]
+        local others = {}
+        for _, x in ipairs(group.members) do
+            if x.uuid ~= m.uuid then others[#others + 1] = x end
+        end
+        if #group.members > 1 then
+        actions[#actions + 1] = { text = T("Remove from group"), callback = function()
+            self:busy(T("Removing %1 from the group…", m.name))
+            local ok, err
+            if m.uuid == coord.uuid then
+                -- the leader leaves: hand the music to the next room first
+                ok, err = guarded_slow(Sonos.delegateTo, coord.ip, others[1].uuid, false)
+            else
+                ok, err = guarded_slow(Sonos.leaveGroup, m.ip)
+            end
+            logger.info("KindleMusic: remove from group", m.name, ok and "ok" or tostring(err))
+            if not ok and tostring(err):match("^upnp:") then
+                return self:regroupDone(others[1].ip, others[1].uuid, Sonos.describeError(err))
+            end
+            self:waitTopology(others[1].ip, function(gs)
+                local g = group_of(gs, m.uuid)
+                return g and #g.members == 1
+            end, 8, function(confirmed)
+                self:regroupDone(others[1].ip, others[1].uuid, not confirmed and not_confirmed or nil)
+            end)
+        end }
+        actions[#actions + 1] = { text = T("Play only here"), callback = function()
+            self:busy(T("Switching to %1…", m.name))
+            -- everyone except this room and the leader leaves
+            for _, x in ipairs(others) do
+                if x.uuid ~= coord.uuid then guarded_slow(Sonos.leaveGroup, x.ip) end
+            end
+            if coord.uuid == m.uuid then
+                return self:waitTopology(m.ip, function(gs)
+                    local g = group_of(gs, m.uuid)
+                    return g and #g.members == 1
+                end, 8, function(confirmed)
+                    self:regroupDone(m.ip, m.uuid, not confirmed and not_confirmed or nil)
+                end)
+            end
+            local ok, err = guarded_slow(Sonos.delegateTo, coord.ip, m.uuid, false)
+            logger.info("KindleMusic: play only here, delegate result", ok and "ok" or tostring(err))
+            if not ok and tostring(err):match("^upnp:") then
+                return self:regroupDone(m.ip, coord.uuid, Sonos.describeError(err))
+            end
+            self:waitTopology(m.ip, function(gs)
+                local g = group_of(gs, m.uuid)
+                return g and g.coordinator == m.uuid and #g.members == 1
+            end, 15, function(confirmed)
+                self:regroupDone(m.ip, m.uuid, not confirmed and not_confirmed or nil)
+            end)
+        end }
+        end
+        return self:showSpeakerDialog(m, group, actions)
+    else
+        local playing = self.state == "PLAYING" or self.state == "TRANSITIONING"
+        if not group or not playing then
+            return self:selectGroup(r.group)
+        end
+        local coord = group.members[1]
+        local function join_then(after)
+            local ok, err = self:joinRoom(coord, m)
+            logger.info("KindleMusic: join", m.name, "->", coord.name, ok and "ok" or tostring(err))
+            if not ok then return self:regroupDone(coord.ip, coord.uuid, Sonos.describeError(err)) end
+            self:waitTopology(coord.ip, function(gs)
+                local g = group_of(gs, m.uuid)
+                return g and g.coordinator == coord.uuid
+            end, 8, function(confirmed)
+                if not confirmed then return self:regroupDone(coord.ip, coord.uuid, not_confirmed) end
+                after()
+            end)
+        end
+        rows[#rows + 1] = { { text = T("Play here instead (move the music)"), callback = function()
+            close()
+            self:busy(T("Moving the music to %1…", m.name))
+            -- 1) other rooms of the old group leave, 2) the new room joins,
+            -- 3) the old leader hands the music over to it and leaves.
+            for _, x in ipairs(group.members) do
+                if x.uuid ~= coord.uuid then guarded_slow(Sonos.leaveGroup, x.ip) end
+            end
+            join_then(function()
+                logger.info("KindleMusic: move music", coord.name, "->", m.name, ": delegating")
+                local ok, err = guarded_slow(Sonos.delegateTo, coord.ip, m.uuid, false)
+                logger.info("KindleMusic: delegate result", ok and "ok" or tostring(err))
+                if not ok and tostring(err):match("^upnp:") then
+                    -- refused: keep both rooms playing rather than stopping the music
+                    return self:regroupDone(coord.ip, coord.uuid, Sonos.describeError(err))
+                end
+                -- ok, or no answer in time: the hand-over may still be going on, so watch the topology
+                self:waitTopology(m.ip, function(gs)
+                    local g = group_of(gs, m.uuid)
+                    return g and g.coordinator == m.uuid and #g.members == 1
+                end, 15, function(confirmed)
+                    logger.info("KindleMusic: move confirmed", confirmed)
+                    self:regroupDone(m.ip, m.uuid, not confirmed and not_confirmed or nil)
+                end)
+            end)
+        end } }
+        rows[#rows + 1] = { { text = T("Add to group (play together)"), callback = function()
+            close()
+            self:busy(T("Adding %1 to the group…", m.name))
+            join_then(function() self:regroupDone(coord.ip, coord.uuid) end)
+        end } }
+        rows[#rows + 1] = { { text = T("Control this room"), callback = function()
+            close()
+            self:selectGroup(r.group)
+        end } }
+    end
+    rows[#rows + 1] = { { text = T("Cancel"), callback = close } }
+    dlg = ButtonDialog:new{ title = m.name, buttons = rows }
+    UIManager:show(dlg)
+end
+
+--- Every room (ticked = in the current group) and the Spotify Connect devices.
+function SonosRemote:showSpeakers()
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local group = (not self.connect) and self:currentGroup() or nil
+    local in_group = {}
+    for _, x in ipairs(group and group.members or {}) do in_group[x.uuid] = true end
+    local dlg
+    local rows = {}
+    for _, r in ipairs(self:roomList()) do
+        rows[#rows + 1] = { { text = (in_group[r.member.uuid] and "☑  " or "☐  ") .. r.member.name, callback = function()
+            UIManager:close(dlg)
+            self:roomTapped(r)
+        end } }
+    end
+    rows[#rows + 1] = { { text = (self.connect and "● " .. self.connect.name .. " · " or "") .. T("Other devices (Spotify)…"),
+        callback = function()
+            UIManager:close(dlg)
+            self:showConnectDevices()
+        end } }
+    rows[#rows + 1] = {
+        { text = T("Find speakers"), callback = function() UIManager:close(dlg); self:rediscover() end },
+        { text = T("Close"), callback = function() UIManager:close(dlg) end },
+    }
+    dlg = ButtonDialog:new{ title = T("Speakers"), buttons = rows }
+    UIManager:show(dlg)
 end
 
 function SonosRemote:changeVolume(delta)
@@ -753,6 +1265,11 @@ function SonosRemote:changeVolume(delta)
     end
     local group = self:currentGroup()
     if not group then return end
+    local t = self:volTarget()
+    if t then
+        local cur = self.volume or guarded(Sonos.getSpeakerVolume, t.ip) or 0
+        return self:setVolume(cur + delta)
+    end
     local vol, err = guarded(Sonos.changeVolume, group, delta)
     if not vol then
         toast(Sonos.describeError(err))
@@ -804,6 +1321,9 @@ local SonosPlugin = WidgetContainer:extend{
 }
 
 function SonosPlugin:init()
+    -- crash.log is block-buffered: write our lines out right away so logs taken
+    -- just after a problem contain it
+    pcall(function() io.stdout:setvbuf("line") end)
     local settings_dir = DataStorage:getSettingsDir()
     local settings_file = settings_dir .. "/kindlemusic.lua"
     -- one-time migration from the old plugin name (sonos.koplugin → settings/sonos.lua)

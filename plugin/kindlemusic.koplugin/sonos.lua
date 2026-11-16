@@ -59,7 +59,7 @@ local function attrs(s)
 end
 
 --- Perform a SOAP call. Returns response body string, or nil + error.
-function Sonos.soap(ip, service, action, args)
+function Sonos.soap(ip, service, action, args, no_retry)
     local body_args = {}
     for _, kv in ipairs(args or {}) do
         body_args[#body_args + 1] = string.format("<%s>%s</%s>", kv[1], Sonos.escape(kv[2]), kv[1])
@@ -73,7 +73,7 @@ function Sonos.soap(ip, service, action, args)
         .. "</u:" .. action .. "></s:Body></s:Envelope>"
 
     local last_err
-    for _ = 1, 2 do -- one retry: speakers occasionally drop a connection
+    for _ = 1, no_retry and 1 or 2 do -- one retry: speakers occasionally drop a connection
         local chunks = {}
         local ok, code = http.request{
             url = "http://" .. ip .. ":1400" .. SERVICES[service],
@@ -233,6 +233,22 @@ function Sonos.changeVolume(group, delta)
         { {"InstanceID", 0}, {"Channel", "Master"}, {"Adjustment", delta} })
     if not resp then return nil, err end
     return tonumber(tag(resp, "NewVolume"))
+end
+
+--- Set an absolute volume (0..100) for a group or a single room; returns the volume.
+function Sonos.setVolume(group, v)
+    v = math.max(0, math.min(100, math.floor(v)))
+    local resp, err
+    if #group.members > 1 then
+        Sonos.soap(group.ip, "GroupRenderingControl", "SnapshotGroupVolume", { {"InstanceID", 0} })
+        resp, err = Sonos.soap(group.ip, "GroupRenderingControl", "SetGroupVolume",
+            { {"InstanceID", 0}, {"DesiredVolume", v} })
+    else
+        resp, err = Sonos.soap(group.ip, "RenderingControl", "SetVolume",
+            { {"InstanceID", 0}, {"Channel", "Master"}, {"DesiredVolume", v} })
+    end
+    if not resp then return nil, err end
+    return v
 end
 
 --- Sonos household (system) ID, e.g. "Sonos_XXXXXXXXXXXXXXXX".
@@ -484,8 +500,15 @@ end
 
 --- Sleep timer: minutes (0/nil = off). Remaining as "H:MM:SS" or "".
 function Sonos.setSleepTimer(ip, minutes)
+    return Sonos.setSleepTimerSeconds(ip, (minutes or 0) * 60)
+end
+
+function Sonos.setSleepTimerSeconds(ip, seconds)
     local v = ""
-    if minutes and minutes > 0 then v = string.format("%02d:%02d:00", math.floor(minutes / 60), minutes % 60) end
+    seconds = math.floor(seconds or 0)
+    if seconds > 0 then
+        v = string.format("%02d:%02d:%02d", math.floor(seconds / 3600), math.floor(seconds / 60) % 60, seconds % 60)
+    end
     return Sonos.soap(ip, "AVTransport", "ConfigureSleepTimer", { {"InstanceID", 0}, {"NewSleepTimerDuration", v} })
 end
 
@@ -522,6 +545,16 @@ function Sonos.joinGroup(member_ip, coordinator_uuid)
     return Sonos.soap(member_ip, "AVTransport", "SetAVTransportURI", {
         {"InstanceID", 0}, {"CurrentURI", "x-rincon:" .. coordinator_uuid}, {"CurrentURIMetaData", ""},
     })
+end
+
+--- Hand the group over to another member (new_uuid). rejoin=false: the old
+-- coordinator leaves the group, so the music "moves" to the remaining rooms.
+function Sonos.delegateTo(coordinator_ip, new_uuid, rejoin)
+    -- the speaker answers only after the hand-over, which can take several seconds;
+    -- never resend it (a second request in the middle of the hand-over stops the music)
+    return Sonos.soap(coordinator_ip, "AVTransport", "DelegateGroupCoordinationTo", {
+        {"InstanceID", 0}, {"NewCoordinator", new_uuid}, {"RejoinGroup", rejoin and 1 or 0},
+    }, true)
 end
 
 --- Take a speaker out of its group (it becomes a standalone room).
