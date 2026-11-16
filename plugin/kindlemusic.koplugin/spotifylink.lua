@@ -38,7 +38,7 @@ local Screen = Device.screen
 local SpotifyLink = {
     PORT = 8888,
     REDIRECT_URI = "https://web3ski.github.io/kindle-music/callback/",
-    TIMEOUT = 15 * 60, -- the page stops after 15 minutes
+    TIMEOUT = 30 * 60, -- the page stops after 30 minutes (creating the Spotify app takes a while)
 }
 
 local ACCOUNTS_DIR = DataStorage:getSettingsDir() .. "/sonos_spotify_accounts"
@@ -71,9 +71,17 @@ body{font-family:-apple-system,system-ui,sans-serif;max-width:520px;margin:0 aut
 h1{font-size:22px;margin:0 0 12px}
 ol{padding-left:20px}li{margin:6px 0}
 input{width:100%;box-sizing:border-box;font:16px ui-monospace,monospace;padding:12px;border:1px solid #888;border-radius:8px}
-button,.btn{display:block;width:100%;margin-top:14px;padding:14px;font-size:17px;font-weight:600;border:0;border-radius:10px;background:#1db954;color:#000;text-align:center;text-decoration:none}
+button,.btn{display:block;box-sizing:border-box;width:100%;margin-top:14px;padding:14px;font-size:17px;font-weight:600;border:2px solid #1db954;border-radius:10px;background:#1db954;color:#000;text-align:center;text-decoration:none}
 code{background:#f0f0f0;padding:2px 5px;border-radius:4px;word-break:break-all}
 .note{color:#555;font-size:14px}.ok{font-size:40px}
+.alt{background:#fff;border-color:#111}
+.step h2{font-size:15px;color:#555;margin:0 0 4px;font-weight:600}
+.step h3{font-size:20px;margin:0 0 10px}
+.nav{display:flex;gap:10px}.nav>*{flex:1}
+.copy{display:flex;gap:8px;align-items:stretch;margin:10px 0}
+.copy code{flex:1;padding:10px;font-size:14px}
+.copy button{width:auto;margin:0;padding:10px 14px;font-size:15px}
+.js .step{display:none}.js .step.on{display:block}
 </style></head><body>]] .. body .. "</body></html>"
 end
 
@@ -176,23 +184,91 @@ function Server:handle(c)
     end
     local action = path:sub(#self.base + 1)
     if action == "" then return self:pageStart(c) end
+    if action == "id" then return self:pageForm(c) end
+    if action == "setup" then return self:pageSetup(c) end
     if action == "go" then return self:pageGo(c, q) end
     if action == "cb" then return self:pageCallback(c, q) end
     return send(c, "404 Not Found", "text/plain", "")
 end
 
-function Server:pageStart(c, error_text)
-    local body = "<h1>" .. html_escape(T("Link Spotify to your Kindle")) .. "</h1>"
-    if error_text then body = body .. "<p><b>" .. html_escape(error_text) .. "</b></p>" end
-    body = body .. "<p>" .. html_escape(T("You need the Client ID of your Spotify app (developer.spotify.com → Dashboard → your app → Settings). In that app, the Redirect URI must be:")) .. "</p>"
-        .. "<p><code>" .. html_escape(SpotifyLink.REDIRECT_URI) .. "</code></p>"
-        .. '<form action="' .. self.base .. 'go" method="get">'
+local function client_id_form(self)
+    return '<form action="' .. self.base .. 'go" method="get">'
         .. '<label for="cid">Client ID</label>'
         .. '<input id="cid" name="client_id" autocomplete="off" autocapitalize="off" spellcheck="false" value="'
-        .. html_escape(known_client_id(self.plugin)) .. '" placeholder="32 characters">'
+        .. html_escape(known_client_id(self.plugin)) .. '" placeholder="' .. html_escape(T("32 letters and digits")) .. '">'
         .. "<button type=\"submit\">" .. html_escape(T("Sign in with Spotify")) .. "</button></form>"
-        .. "<p class=\"note\">" .. html_escape(T("Each person who uses the app must be added in the Spotify dashboard under User Management (up to 5 people).")) .. "</p>"
+end
+
+-- Copy button for the redirect URI. The page is plain http, where navigator.clipboard
+-- is often missing, so fall back to selecting the text and execCommand("copy").
+local COPY_JS = [[<script>
+document.documentElement.className='js';
+function kmCopy(b){var c=b.parentNode.getElementsByTagName('code')[0],ok=false;
+try{if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(c.textContent);ok=true}}catch(e){}
+if(!ok){try{var r=document.createRange();r.selectNodeContents(c);var s=getSelection();s.removeAllRanges();s.addRange(r);ok=document.execCommand('copy')}catch(e){}}
+b.textContent=ok?b.getAttribute('data-done'):b.getAttribute('data-sel');}
+function kmStep(n){var s=document.querySelectorAll('.step');for(var i=0;i<s.length;i++){s[i].className='step'+(i==n?' on':'')}scrollTo(0,0);return false}
+</script>]]
+
+--- First screen: a Client ID is known → the form; otherwise ask whether there is a Spotify app yet.
+function Server:pageStart(c, error_text)
+    if error_text or known_client_id(self.plugin) ~= "" then return self:pageForm(c, error_text) end
+    local body = "<h1>" .. html_escape(T("Link Spotify to your Kindle")) .. "</h1>"
+        .. "<p>" .. html_escape(T("Kindle Music uses your own free Spotify developer app. One person in the household creates it once, which takes about 5 minutes. You need Spotify Premium.")) .. "</p>"
+        .. "<p><b>" .. html_escape(T("Do you already have a Spotify app with a Client ID?")) .. "</b></p>"
+        .. '<a class="btn" href="' .. self.base .. 'setup">' .. html_escape(T("No, show me how to create it")) .. "</a>"
+        .. '<a class="btn alt" href="' .. self.base .. 'id">' .. html_escape(T("Yes, I have a Client ID")) .. "</a>"
     send(c, "200 OK", "text/html; charset=utf-8", page("Kindle Music", body))
+end
+
+function Server:pageForm(c, error_text)
+    local body = "<h1>" .. html_escape(T("Link Spotify to your Kindle")) .. "</h1>"
+    if error_text then body = body .. "<p><b>" .. html_escape(error_text) .. "</b></p>" end
+    body = body .. "<p>" .. html_escape(T("Paste the Client ID of your Spotify app (developer.spotify.com → Dashboard → your app → Settings).")) .. "</p>"
+        .. client_id_form(self)
+        .. "<p class=\"note\">" .. html_escape(T("In the Spotify app, the Redirect URI must be exactly:")) .. " <code>" .. html_escape(SpotifyLink.REDIRECT_URI) .. "</code></p>"
+        .. '<p class="note"><a href="' .. self.base .. 'setup">' .. html_escape(T("No Spotify app yet? Step-by-step guide")) .. "</a></p>"
+    send(c, "200 OK", "text/html; charset=utf-8", page("Kindle Music", body))
+end
+
+--- Step-by-step guide for creating the Spotify developer app, one step per screen.
+function Server:pageSetup(c)
+    local steps = {
+        { T("Open the Spotify dashboard"),
+          "<p>" .. html_escape(T("Open the dashboard and log in with your Spotify account. Accept the developer terms if Spotify asks.")) .. "</p>"
+          .. '<a class="btn" href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">' .. html_escape(T("Open developer.spotify.com")) .. "</a>"
+          .. "<p class=\"note\">" .. html_escape(T("It opens in a new tab. Keep this page open and come back to it after each step.")) .. "</p>" },
+        { T("Create an app"),
+          "<p>" .. html_escape(T("Tap “Create app”. App name and description can be anything, for example “Kindle Music”.")) .. "</p>" },
+        { T("Add the Redirect URI"),
+          "<p>" .. html_escape(T("In “Redirect URIs” paste this address exactly and tap “Add”:")) .. "</p>"
+          .. '<div class="copy"><code>' .. html_escape(SpotifyLink.REDIRECT_URI) .. '</code><button type="button" onclick="kmCopy(this)" data-done="'
+          .. html_escape(T("Copied")) .. '" data-sel="' .. html_escape(T("Selected, copy it")) .. '">' .. html_escape(T("Copy")) .. "</button></div>"
+          .. "<p class=\"note\">" .. html_escape(T("Including the slash at the end.")) .. "</p>" },
+        { T("Choose Web API and save"),
+          "<p>" .. html_escape(T("Under “Which API/SDKs are you planning to use?” tick “Web API”. Accept the terms and tap “Save”.")) .. "</p>" },
+        { T("Other people in the household (optional)"),
+          "<p>" .. html_escape(T("Will someone else link their own Spotify account? In the app open “User Management” and add their name and the e-mail of their Spotify account. Up to 5 people.")) .. "</p>" },
+        { T("Copy the Client ID"),
+          "<p>" .. html_escape(T("In the app open “Settings” and copy the “Client ID” (32 letters and digits). You don't need the Client secret.")) .. "</p>"
+          .. client_id_form(self) },
+    }
+    local body = "<h1>" .. html_escape(T("Create your Spotify app")) .. "</h1>"
+    for i, st in ipairs(steps) do
+        local nav = '<div class="nav">'
+        if i > 1 then
+            nav = nav .. '<a class="btn alt" href="#" onclick="return kmStep(' .. (i - 2) .. ')">' .. html_escape(T("Back")) .. "</a>"
+        end
+        if i < #steps then
+            nav = nav .. '<a class="btn" href="#" onclick="return kmStep(' .. i .. ')">' .. html_escape(T("Next")) .. "</a>"
+        end
+        nav = nav .. "</div>"
+        body = body .. '<div class="step' .. (i == 1 and " on" or "") .. '"><h2>'
+            .. html_escape(T("Step %1 of %2", i, #steps)) .. "</h2><h3>" .. html_escape(st[1]) .. "</h3>"
+            .. st[2] .. nav .. "</div>"
+    end
+    body = body .. '<p class="note">' .. html_escape(T("Guide with more detail:")) .. ' <a href="https://web3ski.github.io/kindle-music/start/#spotify" target="_blank" rel="noopener">web3ski.github.io/kindle-music/start</a></p>'
+    send(c, "200 OK", "text/html; charset=utf-8", page("Kindle Music", COPY_JS .. body))
 end
 
 function Server:pageGo(c, q)
@@ -281,7 +357,7 @@ function LinkDialog:init()
     local qr_side = math.floor(math.min(inner, sh * 0.42))
     local steps = T("1. Connect your phone to the same Wi-Fi as this Kindle.\n"
         .. "2. Scan the code with the phone's camera.\n"
-        .. "3. Paste the Client ID of your Spotify app and sign in.")
+        .. "3. Follow the steps on the phone and sign in. No Spotify app yet? The phone guides you through creating one.")
     local buttons = ButtonTable:new{
         width = inner,
         buttons = { { { text = T("Cancel"), callback = function()
