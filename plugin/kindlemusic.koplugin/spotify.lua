@@ -193,6 +193,8 @@ function Spotify:player()
         artist = table.concat(artists, ", "),
         album = type(it.album) == "table" and it.album.name or (type(it.show) == "table" and it.show.name) or nil,
         track_id = it.type == "track" and it.id or nil,
+        progress = tonumber(d.progress_ms) and math.floor(tonumber(d.progress_ms) / 1000) or nil,
+        duration = tonumber(it.duration_ms) and math.floor(tonumber(it.duration_ms) / 1000) or nil,
         image = type(it.album) == "table" and Spotify.pickImage(it.album.images, 300)
             or (type(it.show) == "table" and Spotify.pickImage(it.show.images, 300)) or nil,
     }

@@ -41,14 +41,38 @@ local SleepScreen = {
 }
 
 local STALE_SECONDS = 20
+-- Live updates while asleep: wake up (RTC alarm) when the song should end, at the latest after
+-- MAX_WAIT seconds (skips/pauses from another device), or MAX_WAIT_CHARGING on the charger.
+-- Streams without a track length (internet radio) are checked every STREAM_WAIT seconds.
+local MAX_WAIT = 600
+local MAX_WAIT_CHARGING = 60
+local STREAM_WAIT = 300
+local MIN_WAIT = 20
+local NETWORK_WAIT = 15 -- seconds to wait for Wi-Fi after a scheduled wakeup
+
+--- "0:03:25" / "3:25" -> seconds (nil when unknown).
+function SleepScreen.seconds(s)
+    if type(s) == "number" then return s end
+    if type(s) ~= "string" then return nil end
+    local h, m, sec = s:match("^(%d+):(%d+):(%d+)")
+    if not h then
+        m, sec = s:match("^(%d+):(%d+)")
+        h = 0
+    end
+    if not m then return nil end
+    return tonumber(h) * 3600 + tonumber(m) * 60 + tonumber(sec)
+end
 
 function SleepScreen.update(np)
     if np then np.time = os.time() end
     SleepScreen.now_playing = np
 end
 
+-- short timeouts while going to sleep; longer ones after a scheduled wakeup (nobody waits then)
+local timeouts = { 1, 2 }
+
 local function quick(fn, ...)
-    socketutil:set_timeout(1, 2)
+    socketutil:set_timeout(timeouts[1], timeouts[2])
     local ok, a, b = pcall(fn, ...)
     socketutil:reset_timeout()
     if not ok then return nil end
@@ -67,12 +91,20 @@ local function refresh(np)
         local track = quick(Sonos.getTrack, np.ip) or {}
         np.state = state
         np.title, np.artist, np.album, np.art = track.title, track.artist, track.album, track.art
+        np.duration, np.position = SleepScreen.seconds(track.duration), SleepScreen.seconds(track.position)
     elseif np.connect_id and SleepScreen.plugin then
         local sp = SleepScreen.plugin:spotify()
-        local st = sp and quick(sp.player, sp)
-        if not st or st.device_id ~= np.connect_id then return np end
+        local st, err
+        if sp then st, err = quick(sp.player, sp) end
+        if (not st and err == "none") or (st and st.device_id ~= np.connect_id) then
+            np.state = "STOPPED" -- nothing playing, or playing on another device now
+            np.time = os.time()
+            return np
+        end
+        if not st then return np end
         np.state = st.is_playing and "PLAYING" or "PAUSED_PLAYBACK"
         np.title, np.artist, np.album, np.art = st.title, st.artist, st.album, st.image
+        np.duration, np.position = st.duration, st.progress
     end
     np.time = os.time()
     return np
@@ -187,6 +219,106 @@ function SleepScreen.render(np, w, h)
     return bb
 end
 
+---------------------------------------------------------------------------
+-- Live updates: scheduled wakeups at the end of each song
+---------------------------------------------------------------------------
+
+local function live_enabled()
+    local plugin = SleepScreen.plugin
+    return plugin and not plugin.settings:isFalse("sleep_screen")
+        and not plugin.settings:isFalse("sleep_screen_live")
+        and Device:isKindle() and Device.wakeup_mgr ~= nil
+end
+
+local function is_charging()
+    local ok, charging = pcall(function() return Device.powerd:isCharging() end)
+    return ok and charging or false
+end
+
+--- Seconds until we should look again, or nil when nothing is playing.
+function SleepScreen.nextCheck(np)
+    if not np or not (np.state == "PLAYING" or np.state == "TRANSITIONING") then return nil end
+    local cap = is_charging() and MAX_WAIT_CHARGING or MAX_WAIT
+    local wait
+    if np.duration and np.duration > 0 and np.position then
+        -- +5 s so the next song has started; Kindle alarms can fire up to ~10 s early
+        wait = np.duration - np.position - (os.time() - (np.time or os.time())) + 5
+    else
+        wait = STREAM_WAIT
+    end
+    return math.max(MIN_WAIT, math.min(cap, wait))
+end
+
+local function unschedule()
+    if Device.wakeup_mgr and SleepScreen._wake then
+        Device.wakeup_mgr:removeTasks(nil, SleepScreen._wake)
+    end
+end
+
+local function schedule(np)
+    unschedule()
+    if not live_enabled() then return end
+    local wait = SleepScreen.nextCheck(np)
+    if not wait then return end
+    logger.info("kindlemusic: next sleep-screen update in", wait, "s")
+    Device.wakeup_mgr:addTask(wait, SleepScreen._wake)
+end
+
+--- Replace the picture on the sleep screen that is currently shown.
+local function repaint(np)
+    local Screensaver = require("ui/screensaver")
+    local UIManager = require("ui/uimanager")
+    local sw = Screensaver.screensaver_widget
+    if not sw or not sw[1] then return false end
+    local w, h = Screen:getWidth(), Screen:getHeight()
+    local img = ImageWidget:new{ image = SleepScreen.render(np, w, h), image_disposable = true, width = w, height = h }
+    local old = sw[1][1]
+    sw[1][1] = img
+    sw.widget = img
+    if old and old.free then old:free() end
+    UIManager:setDirty(sw, "full")
+    UIManager:forceRePaint()
+    return true
+end
+
+--- Called by KOReader's WakeupMgr about 15 s after a scheduled wakeup (device still on the sleep screen).
+function SleepScreen._wake()
+    local UIManager = require("ui/uimanager")
+    local NetworkMgr = require("ui/network/manager")
+    local np = SleepScreen.now_playing
+    if not np or not live_enabled() then return end
+    local started = os.time()
+    local function attempt()
+        local Screensaver = require("ui/screensaver")
+        if not Screensaver.screensaver_widget then return end -- the user woke the Kindle meanwhile
+        local ok, online = pcall(NetworkMgr.isConnected, NetworkMgr)
+        if not (ok and online) and os.time() - started < NETWORK_WAIT then
+            UIManager:scheduleIn(1, attempt)
+            return
+        end
+        np.time = 0 -- force a fresh read
+        timeouts = { 3, 8 }
+        np = refresh(np)
+        timeouts = { 1, 2 }
+        if np.time == 0 then
+            -- no network / no answer: keep the old picture, try again later
+            np.time = os.time()
+            np.failures = (np.failures or 0) + 1
+            logger.warn("kindlemusic: sleep-screen update failed (offline?)", np.failures)
+            unschedule()
+            if np.failures < 3 then
+                Device.wakeup_mgr:addTask(is_charging() and MAX_WAIT_CHARGING or STREAM_WAIT, SleepScreen._wake)
+            end
+            return
+        end
+        np.failures = 0
+        local okp, err = pcall(repaint, np)
+        if not okp then logger.warn("kindlemusic: sleep-screen repaint failed:", err) end
+        schedule(np)
+    end
+    attempt()
+end
+
 --- Install the Screensaver hook once per KOReader run; `plugin` is the newest plugin instance.
 function SleepScreen.install(plugin)
     SleepScreen.plugin = plugin
@@ -197,6 +329,7 @@ function SleepScreen.install(plugin)
     Screensaver.show = function(ss, ...)
         -- only for a normal sleep (not power-off / reboot screens) with a UI to return to
         if ss.ui and (ss.prefix == nil or ss.prefix == "") then
+            pcall(unschedule)
             local ok, err = pcall(function()
                 local np = current()
                 if not np then return end
@@ -209,6 +342,7 @@ function SleepScreen.install(plugin)
                 ss.screensaver_type = "cover"
                 ss.screensaver_background = "white"
                 ss.show_message = false
+                schedule(np)
             end)
             if not ok then logger.warn("kindlemusic: sleep screen failed:", err) end
         end

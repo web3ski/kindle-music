@@ -99,6 +99,7 @@ local pl = {
     ["Visible rooms"] = "Widoczne pokoje",
     ["Language: %1"] = "Język: %1",
     ["Sleep screen: now playing"] = "Ekran uśpienia: teraz gra",
+    ["Sleep screen: wake up to show the next song"] = "Ekran uśpienia: budź się na kolejny utwór",
     ["Account: %1"] = "Konto: %1",
     ["none"] = "brak",
     ["change / add / remove"] = "zmień / dodaj / usuń",
